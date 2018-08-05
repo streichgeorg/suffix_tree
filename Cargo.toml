@@ -1,0 +1,6 @@
+[package]
+name = "suffix_tree"
+version = "0.1.0"
+authors = ["Georg Streich <georg.streich@bluewin.ch>"]
+
+[dependencies]
