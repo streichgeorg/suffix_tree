@@ -1,195 +1,284 @@
+use std::collections::HashMap;
 use std::fmt;
+use std::str;
+
+type NodeId = u32;
 
 #[derive(Debug)]
-struct Node {
-    children: Option<Vec<usize>>,
-    start: usize,
-    end: usize,
+struct InternalNode {
+    start: u32,
+    end: u32,
+    edges: HashMap<u8, NodeId>,
+
+    suffix_link: Option<NodeId>,
+}
+
+#[derive(Debug)]
+enum Node {
+    Internal(InternalNode),
+    Leaf(u32),
 }
 
 impl Node {
-    fn new(start: usize, end: usize) -> Node {
-        Node {
-            children: None,
+    fn new_internal(start: u32, end: u32) -> Node {
+        Node::Internal(InternalNode {
             start,
             end,
+            edges: HashMap::new(),
+
+            suffix_link: None,
+        })
+    }
+
+    fn new_leaf(start: u32) -> Node {
+        Node::Leaf(start)
+    }
+
+    fn internal(&self) -> &InternalNode {
+        if let Node::Internal(ref internal) = self {
+            internal
+        } else {
+            panic!("Expected this node to be an internal node.")
         }
     }
 
-    fn add_child(&mut self, child_index: usize) {
-        match self.children {
-            None => {
-                self.children = Some(vec![child_index]);
-            },
-            Some(ref mut children) => {
-                children.push(child_index)
-            }
+    fn mut_internal(&mut self) -> &mut InternalNode {
+        if let Node::Internal(ref mut internal) = self {
+            internal
+        } else {
+            panic!("Expected this node to be an internal node.")
         }
     }
 }
 
-#[derive(Debug)]
-pub struct SuffixTree {
+pub struct SuffixTree<'a> {
+    text: &'a [u8],
+
     nodes: Vec<Node>, 
-    root: usize,
-    text: String,
+    
+    active_node: NodeId,
+    active_edge: u8,
+    active_length: usize,
+
+    remaining: usize,
+
+    step: usize,
 }
 
-impl fmt::Display for SuffixTree {
+impl<'a> fmt::Debug for SuffixTree<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(writeln!(f, "tree"));
-        try!(writeln!(f, "  root   0: children: {:?}", self.get_node(0).children.as_ref().unwrap()));
-        for (i, node) in self.nodes.iter().enumerate().skip(1) {
+        try!(writeln!(f, "SuffixTree{{"));
+        try!(writeln!(f, "    active_node: {}", self.active_node));
+        try!(writeln!(f, "    active_edge: {}", self.active_edge as char));
+        try!(writeln!(f, "    active_length: {}\n", self.active_length));
+
+        try!(writeln!(f, "    remaining: {}", self.remaining));
+        try!(writeln!(f, "    step: {}\n", self.step));
+
+        try!(writeln!(f, "    nodes: ["));
+        for (i, node) in self.nodes.iter().enumerate() {
             match node {
-                Node {children: Some(ref children), start, end} => {
-                    let text: &str = &self.text[*start..*end];
-                    try!(writeln!(f, "  parent {}: children: {:?} text: {}", i, children, text));
+                &Node::Internal(ref internal) => {
+                    let text = str::from_utf8(&self.text[(internal.start as usize)..(internal.end as usize)])
+                                .unwrap_or("<invalid_string>");
+
+                    let edges: HashMap<char, u32> = internal.edges.iter().map(|(k, v)| (*k as char, *v)).collect();
+
+                    try!(writeln!(f, "       InternalNode: {{"));
+                    try!(writeln!(f, "          id: {}", i));
+                    try!(writeln!(f, "          text: {}", text));
+                    try!(writeln!(f, "          children: {:?}", edges));
+                    try!(writeln!(f, "          suffix_link: {:?}", internal.suffix_link));
+                    try!(writeln!(f, "       }}"));
                 },
-                Node {children: None, start, end} => {
-                    let text: &str = &self.text[*start..*end];
-                    try!(writeln!(f, "  child  {}: text: {}", i, text));
+                &Node::Leaf(start) => {
+                    let text = str::from_utf8(&self.text[(start as usize)..self.step])
+                                .unwrap_or("<invalid_string>");
+
+                    try!(writeln!(f, "       LeafNode: {{"));
+                    try!(writeln!(f, "          id: {}", i));
+                    try!(writeln!(f, "          text: {}", text));
+                    try!(writeln!(f, "       }}"));
                 }
             }
         }
-         
-        write!(f, "")
+        try!(writeln!(f, "    ]"));
+
+        writeln!(f, "}}")
     }
 }
 
-enum TreeLocation {
-    Node(usize),
-    Edge(usize, usize, usize),
-}
-
-impl SuffixTree {
-    pub fn new(mut text: String) -> SuffixTree {
-        text.push_str("$");
-        let mut tree = SuffixTree {
-            nodes: vec![Node::new(0, 0)],
-            root: 0,
+impl<'a> SuffixTree<'a> {
+    pub fn new(text: &'a [u8]) -> SuffixTree<'a> {
+        SuffixTree {
             text,
-        };
-        tree.build();
 
-        tree
+            nodes: vec![Node::new_internal(0, 0)],
+
+            active_node: 0,
+            active_edge: 0,
+            active_length: 0,
+
+            remaining: 0,
+
+            step: 0,
+        }
     }
 
-    fn build(&mut self) {
-        for i in 0..self.text.len() {
-            let tree_location = {
-                let suffix = &self.text[i..];
-                self.follow_path(self.root, suffix)
+    fn get_node(&self, node: NodeId) -> &Node {
+        &self.nodes[node as usize]
+    }
+
+    fn get_mut_node(&mut self, node: NodeId) -> &mut Node {
+        &mut self.nodes[node as usize]
+    }
+
+    fn get_active_node(&self) -> &InternalNode {
+        self.nodes[self.active_node as usize].internal()
+    }
+
+    fn get_mut_active_node(&mut self) -> &mut InternalNode {
+        self.nodes[self.active_node as usize].mut_internal()
+    }
+
+    fn get_active_edge(&self) -> NodeId {
+        *self.get_active_node().edges.get(&self.active_edge).unwrap()
+    }
+
+    fn get_label(&self, node: NodeId) -> &[u8] {
+        match self.get_node(node) {
+            &Node::Internal(InternalNode { start, end, .. }) => &self.text[(start as usize)..(end as usize)],
+            &Node::Leaf(start) => &self.text[(start as usize)..(self.step)],
+        }
+    }
+    
+    fn get_label_length(&self, node: NodeId) -> usize {
+        match self.get_node(node) {
+            &Node::Internal(InternalNode { start, end, .. }) => ((end - start) as usize),
+            &Node::Leaf(start) => self.step - (start as usize),
+        }
+    }
+
+    fn insert_leaf_node(&mut self) -> bool {
+        // Check if the active node has no edge starting with the current character.
+        if self.get_active_node().edges.contains_key(&self.text[self.step]) {
+            return false;
+        }
+
+        let leaf = self.nodes.len() as u32;
+        self.nodes.push(Node::new_leaf(self.step as u32));
+
+        let c = self.text[self.step];
+        self.get_mut_active_node().edges.insert(c, leaf);
+
+        true
+    }
+
+    fn insert_internal_node(&mut self, previously_created_node: &mut Option<NodeId>) -> bool {
+        // Check if the next character from the active point is equal to the one we want to add.
+        if self.get_label(self.get_active_edge())[self.active_length] == self.text[self.step] {
+            return false;
+        }
+
+        // Insert a new internal node in between the active node and the corresponding child node.
+        // Add a leaf node to the new internal node.
+        let label_start = match self.get_node(self.get_active_edge()) {
+            &Node::Internal(InternalNode { start, .. }) => start,
+            &Node::Leaf(start) => start
+        } as usize;
+
+        let internal = self.nodes.len();
+        self.nodes.push(Node::new_internal(label_start as u32, (label_start + self.active_length) as u32));
+
+        let leaf = self.nodes.len();
+        self.nodes.push(Node::new_leaf(self.step as u32));
+        
+        let existing_edge = self.get_active_edge();
+
+        let length = self.active_length;
+        match self.get_mut_node(existing_edge) {
+            Node::Internal(InternalNode { ref mut start, .. }) => *start += length as u32,
+            Node::Leaf(ref mut start) => *start += length as u32,
+        };
+
+        let active_to_internal = self.active_edge;
+        self.get_mut_active_node().edges.insert(active_to_internal, internal as u32);
+
+        let internal_to_existing = self.text[label_start + self.active_length];
+        let internal_to_leaf = self.text[self.step];
+        self.get_mut_node(internal as u32).mut_internal().edges.insert(internal_to_existing, existing_edge);
+        self.get_mut_node(internal as u32).mut_internal().edges.insert(internal_to_leaf, leaf as u32);
+
+
+        // if there is a previously created internal node, make suffix link from it to the node
+        // created in this extension.
+        if let &mut Some(node) = previously_created_node {
+            self.get_mut_node(node).mut_internal().suffix_link = Some(internal as u32);
+        }
+        *previously_created_node = Some(internal as u32);
+
+        // Update the active point. Consider that active length could be greater than edge length
+        // at the new active node.
+        if self.active_node == 0 {
+            self.active_edge = self.text[self.step - self.remaining - 1];
+            self.active_length -= 1;
+        } else {
+            self.active_node = self.get_active_node().suffix_link.unwrap_or(0);
+
+            let mut num_skipped = 0;
+            loop {
+                let label_length = self.get_label_length(self.get_active_edge());
+
+                if self.active_length - num_skipped == label_length {
+                    self.active_node = self.get_active_edge();
+                    self.active_edge = 0;
+                    self.active_length = 0;
+
+                    break;
+                } else if self.active_length - num_skipped < label_length {
+                    self.active_length -= num_skipped;
+                    
+                    break;
+                } else {
+                    num_skipped += label_length;
+
+                    self.active_node = self.get_active_edge();
+                    self.active_edge = self.text[label_start + num_skipped];
+                }
+            }
+        }
+        
+        true
+    }
+
+    pub fn step(&mut self) {
+        self.remaining += 1;
+
+        let mut previously_created_node = None;
+
+        for _ in 0..self.remaining {
+            let inserted_node = if self.active_length == 0 {
+                self.insert_leaf_node()
+            } else {
+                self.insert_internal_node(&mut previously_created_node)
             };
 
-            match tree_location {
-                (num_matched, _) if num_matched == (self.text.len() - i) => {},
-                (num_matched, TreeLocation::Node(node_index)) => {
-                    let end = self.text.len();
-                    self.add_node_with_parent(node_index, Node::new(i + num_matched, end));
-                },
-                (num_matched, TreeLocation::Edge(a_index, child, length)) => {
-                    let b_index = self.get_child_index(a_index, child);
-
-                    let c_index = self.add_node(Node::new(i + num_matched - length, i + num_matched));
-
-                    let d = Node::new(i + num_matched, self.text.len());
-                    self.add_node_with_parent(c_index, d);
-
-                    {
-                        let b = self.get_mut_node(b_index);
-                        b.start += length;
-                    }
-
-                    {
-                        let c = self.get_mut_node(c_index);
-                        c.add_child(b_index);
-                    }
-
-                    {
-                        let a = self.get_mut_node(a_index);
-                        let children = a.children.as_mut().unwrap();
-                        children[child] = c_index;
-                    }
-
-                },
-            }
-        }
-    }
-
-    fn follow_path(&self, start_node: usize, path: &str) -> (usize, TreeLocation) {
-        let mut current_node = start_node; 
-        let mut num_matched = 0;
-
-        loop {
-            if let Some(ref children) = self.get_node(current_node).children {
-                let mut has_match = false;
-                for (i, &child) in children.iter().enumerate() {
-                    let node_text = self.get_node_text(child);
-
-                    let remaining_chars = path[num_matched..].chars();
-                    let prefix_len = remaining_chars.zip(node_text.chars())
-                                                    .take_while(|(a, b)| a == b)
-                                                    .count();
-                    num_matched += prefix_len;
-
-                    if prefix_len == node_text.len() {
-                        current_node = child;
-                        has_match = true;
-                        break;
-                    } else if prefix_len > 0 {
-                        return (num_matched, TreeLocation::Edge(current_node, i, prefix_len))
-                    }
-                }
-                if !has_match {
-                    return (num_matched, TreeLocation::Node(current_node))
-                }
+            if inserted_node {
+                self.remaining -= 1;
             } else {
-                return (num_matched, TreeLocation::Node(current_node))
+                if self.active_length == 0 {
+                    self.active_edge = self.text[self.step];
+                }
+                self.active_length += 1;
+                if self.active_length == self.get_label_length(self.get_active_edge()) {
+                    self.active_node = self.get_active_edge();
+                    self.active_edge = 0;
+                    self.active_length = 0;
+                }
+                break;
             }
         }
-    }
 
-    fn get_mut_node(&mut self, node_index: usize) -> &mut Node {
-        &mut self.nodes[node_index]
-    }
-
-    fn get_node(&self, node_index: usize) -> &Node {
-        &self.nodes[node_index]
-    }
-
-    fn get_node_text(&self, node_index: usize) -> &str {
-        let node = self.get_node(node_index);
-        &self.text[node.start..node.end]
-    }
-
-    fn get_child_index(&self, parent_index: usize, child: usize) -> usize {
-        if let Some(ref children) = self.get_node(parent_index).children {
-            return children[child]
-        }
-        panic!();
-    }
-
-    fn add_node(&mut self, node: Node) -> usize {
-        let node_index = self.nodes.len();
-        self.nodes.push(node);
-
-        node_index
-    }
-
-    fn add_node_with_parent(&mut self, parent_index: usize, node: Node) -> usize {
-        let node_index = self.nodes.len();
-        self.nodes.push(node);
-
-        self.get_mut_node(parent_index).add_child(node_index);
-
-        node_index
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+        self.step += 1;
     }
 }
