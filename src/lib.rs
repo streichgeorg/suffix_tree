@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str;
 
-type NodeId = u32;
+type NodeId = usize;
 
 #[derive(Debug)]
 struct InternalNode {
-    start: u32,
-    end: u32,
+    start: usize,
+    end: usize,
     edges: HashMap<u8, NodeId>,
 
     suffix_link: Option<NodeId>,
@@ -16,11 +16,11 @@ struct InternalNode {
 #[derive(Debug)]
 enum Node {
     Internal(InternalNode),
-    Leaf(u32),
+    Leaf(usize),
 }
 
 impl Node {
-    fn new_internal(start: u32, end: u32) -> Node {
+    fn new_internal(start: usize, end: usize) -> Node {
         Node::Internal(InternalNode {
             start,
             end,
@@ -30,7 +30,7 @@ impl Node {
         })
     }
 
-    fn new_leaf(start: u32) -> Node {
+    fn new_leaf(start: usize) -> Node {
         Node::Leaf(start)
     }
 
@@ -79,10 +79,10 @@ impl<'a> fmt::Debug for SuffixTree<'a> {
         for (i, node) in self.nodes.iter().enumerate() {
             match node {
                 &Node::Internal(ref internal) => {
-                    let text = str::from_utf8(&self.text[(internal.start as usize)..(internal.end as usize)])
+                    let text = str::from_utf8(&self.text[(internal.start)..(internal.end)])
                                 .unwrap_or("<invalid_string>");
 
-                    let edges: HashMap<char, u32> = internal.edges.iter().map(|(k, v)| (*k as char, *v)).collect();
+                    let edges: HashMap<char, usize> = internal.edges.iter().map(|(k, v)| (*k as char, *v)).collect();
 
                     try!(writeln!(f, "       InternalNode: {{"));
                     try!(writeln!(f, "          id: {}", i));
@@ -92,7 +92,7 @@ impl<'a> fmt::Debug for SuffixTree<'a> {
                     try!(writeln!(f, "       }}"));
                 },
                 &Node::Leaf(start) => {
-                    let text = str::from_utf8(&self.text[(start as usize)..self.step])
+                    let text = str::from_utf8(&self.text[(start)..self.step])
                                 .unwrap_or("<invalid_string>");
 
                     try!(writeln!(f, "       LeafNode: {{"));
@@ -126,19 +126,19 @@ impl<'a> SuffixTree<'a> {
     }
 
     fn get_node(&self, node: NodeId) -> &Node {
-        &self.nodes[node as usize]
+        &self.nodes[node]
     }
 
     fn get_mut_node(&mut self, node: NodeId) -> &mut Node {
-        &mut self.nodes[node as usize]
+        &mut self.nodes[node]
     }
 
     fn get_active_node(&self) -> &InternalNode {
-        self.nodes[self.active_node as usize].internal()
+        self.nodes[self.active_node].internal()
     }
 
     fn get_mut_active_node(&mut self) -> &mut InternalNode {
-        self.nodes[self.active_node as usize].mut_internal()
+        self.nodes[self.active_node].mut_internal()
     }
 
     fn get_active_edge(&self) -> NodeId {
@@ -147,27 +147,30 @@ impl<'a> SuffixTree<'a> {
 
     fn get_label(&self, node: NodeId) -> &[u8] {
         match self.get_node(node) {
-            &Node::Internal(InternalNode { start, end, .. }) => &self.text[(start as usize)..(end as usize)],
-            &Node::Leaf(start) => &self.text[(start as usize)..(self.step)],
+            &Node::Internal(InternalNode { start, end, .. }) => &self.text[(start)..(end)],
+            &Node::Leaf(start) => &self.text[(start)..(self.step)],
         }
     }
     
     fn get_label_length(&self, node: NodeId) -> usize {
         match self.get_node(node) {
-            &Node::Internal(InternalNode { start, end, .. }) => ((end - start) as usize),
-            &Node::Leaf(start) => self.step - (start as usize),
+            &Node::Internal(InternalNode { start, end, .. }) => ((end - start)),
+            &Node::Leaf(start) => self.step - (start),
         }
     }
 
     fn insert_leaf_node(&mut self) -> bool {
-        // Check if the active node has no edge starting with the current character.
+        // Check if the active nod has an edge that starts with the current character. If so we
+        // dont need to to anything in this extension.
         if self.get_active_node().edges.contains_key(&self.text[self.step]) {
             return false;
         }
 
-        let leaf = self.nodes.len() as u32;
-        self.nodes.push(Node::new_leaf(self.step as u32));
+        // Add a leaf node to the active node.
+        let leaf = self.nodes.len();
+        self.nodes.push(Node::new_leaf(self.step));
 
+        // Add a leaf node to the active node.
         let c = self.text[self.step];
         self.get_mut_active_node().edges.insert(c, leaf);
 
@@ -175,7 +178,8 @@ impl<'a> SuffixTree<'a> {
     }
 
     fn insert_internal_node(&mut self, previously_created_node: &mut Option<NodeId>) -> bool {
-        // Check if the next character from the active point is equal to the one we want to add.
+        // Check if the next character from the active point is equal to the one we want to add. If
+        // so we don't need to do anything in this extension.
         if self.get_label(self.get_active_edge())[self.active_length] == self.text[self.step] {
             return false;
         }
@@ -185,37 +189,37 @@ impl<'a> SuffixTree<'a> {
         let label_start = match self.get_node(self.get_active_edge()) {
             &Node::Internal(InternalNode { start, .. }) => start,
             &Node::Leaf(start) => start
-        } as usize;
+        };
 
         let internal = self.nodes.len();
-        self.nodes.push(Node::new_internal(label_start as u32, (label_start + self.active_length) as u32));
+        self.nodes.push(Node::new_internal(label_start, label_start + self.active_length));
 
         let leaf = self.nodes.len();
-        self.nodes.push(Node::new_leaf(self.step as u32));
+        self.nodes.push(Node::new_leaf(self.step));
         
         let existing_edge = self.get_active_edge();
 
         let length = self.active_length;
         match self.get_mut_node(existing_edge) {
-            Node::Internal(InternalNode { ref mut start, .. }) => *start += length as u32,
-            Node::Leaf(ref mut start) => *start += length as u32,
+            Node::Internal(InternalNode { ref mut start, .. }) => *start += length,
+            Node::Leaf(ref mut start) => *start += length,
         };
 
         let active_to_internal = self.active_edge;
-        self.get_mut_active_node().edges.insert(active_to_internal, internal as u32);
+        self.get_mut_active_node().edges.insert(active_to_internal, internal);
 
         let internal_to_existing = self.text[label_start + self.active_length];
         let internal_to_leaf = self.text[self.step];
-        self.get_mut_node(internal as u32).mut_internal().edges.insert(internal_to_existing, existing_edge);
-        self.get_mut_node(internal as u32).mut_internal().edges.insert(internal_to_leaf, leaf as u32);
+        self.get_mut_node(internal).mut_internal().edges.insert(internal_to_existing, existing_edge);
+        self.get_mut_node(internal).mut_internal().edges.insert(internal_to_leaf, leaf);
 
 
         // if there is a previously created internal node, make suffix link from it to the node
         // created in this extension.
         if let &mut Some(node) = previously_created_node {
-            self.get_mut_node(node).mut_internal().suffix_link = Some(internal as u32);
+            self.get_mut_node(node).mut_internal().suffix_link = Some(internal);
         }
-        *previously_created_node = Some(internal as u32);
+        *previously_created_node = Some(internal);
 
         // Update the active point. Consider that active length could be greater than edge length
         // at the new active node.
