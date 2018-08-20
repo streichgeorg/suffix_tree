@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt;
 use std::str;
 
 type NodeId = usize;
@@ -51,6 +50,7 @@ impl Node {
     }
 }
 
+#[derive(Debug)]
 pub struct SuffixTree<'a> {
     text: &'a [u8],
 
@@ -61,51 +61,8 @@ pub struct SuffixTree<'a> {
     active_length: usize,
 
     remaining: usize,
-
     position: usize,
-}
-
-impl<'a> fmt::Debug for SuffixTree<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(writeln!(f, "SuffixTree{{"));
-        try!(writeln!(f, "    active_node: {}", self.active_node));
-        try!(writeln!(f, "    active_edge: {}", self.active_edge as char));
-        try!(writeln!(f, "    active_length: {}\n", self.active_length));
-
-        try!(writeln!(f, "    remaining: {}", self.remaining));
-        try!(writeln!(f, "    step: {}\n", self.position));
-
-        try!(writeln!(f, "    nodes: ["));
-        for (i, node) in self.nodes.iter().enumerate() {
-            match node {
-                &Node::Internal(ref internal) => {
-                    let text = str::from_utf8(&self.text[(internal.start)..(internal.end)])
-                                .unwrap_or("<invalid_string>");
-
-                    let edges: HashMap<_, _> = internal.edges.iter().map(|(k, v)| (*k as char, *v)).collect();
-
-                    try!(writeln!(f, "       InternalNode: {{"));
-                    try!(writeln!(f, "          id: {}", i));
-                    try!(writeln!(f, "          text: {}", text));
-                    try!(writeln!(f, "          children: {:?}", edges));
-                    try!(writeln!(f, "          suffix_link: {:?}", internal.suffix_link));
-                    try!(writeln!(f, "       }}"));
-                },
-                &Node::Leaf(start) => {
-                    let text = str::from_utf8(&self.text[(start)..self.position])
-                                .unwrap_or("<invalid_string>");
-
-                    try!(writeln!(f, "       LeafNode: {{"));
-                    try!(writeln!(f, "          id: {}", i));
-                    try!(writeln!(f, "          text: {}", text));
-                    try!(writeln!(f, "       }}"));
-                }
-            }
-        }
-        try!(writeln!(f, "    ]"));
-
-        writeln!(f, "}}")
-    }
+    previously_created_node: Option<NodeId>,
 }
 
 impl<'a> SuffixTree<'a> {
@@ -122,6 +79,8 @@ impl<'a> SuffixTree<'a> {
             remaining: 0,
 
             position: 0,
+
+            previously_created_node: None,
         }
     }
 
@@ -159,159 +118,149 @@ impl<'a> SuffixTree<'a> {
         }
     }
 
-    fn insert_leaf_node(&mut self, previously_created_node: &mut Option<NodeId>) -> bool {
-        // Check if the active nod has an edge that starts with the current character. If so we
-        // dont need to to anything in this extension.
-        if self.get_active_node().edges.contains_key(&self.text[self.position]) {
-            return false;
-        }
-
-        // Add a leaf node to the active node.
-        let leaf = self.nodes.len();
-        self.nodes.push(Node::new_leaf(self.position));
-
-        // Add a leaf node to the active node.
-        let c = self.text[self.position];
-        self.get_mut_active_node().edges.insert(c, leaf);
-
-        if self.active_node != 0 && previously_created_node.is_some() {
-            self.get_mut_node(previously_created_node.unwrap()).mut_internal().suffix_link = Some(self.active_node);
-            *previously_created_node = Some(self.active_node);
-        }
-
-        if self.active_node != 0 {
-            self.active_node = self.get_active_node().suffix_link.unwrap_or(0);
-        }
-
-        true
-    }
-
-    fn walk_down(&mut self, offset: usize) {
-        let mut num_skipped = 0;
-        loop {
-            let label_length = self.get_substring_length(self.get_active_edge());
-
-            if self.active_length - num_skipped < label_length {
-                self.active_length -= num_skipped;
-                
-                break;
-            } else if self.active_length - num_skipped == label_length {
-                self.active_node = self.get_active_edge();
-                self.active_edge = 0;
-                self.active_length = 0;
-
-                break;
-            } else {
-                num_skipped += label_length;
-
-                self.active_node = self.get_active_edge();
-                self.active_edge = self.text[offset + num_skipped];
-            }
-        }
-    }
-
-    fn insert_internal_node(&mut self, previously_created_node: &mut Option<NodeId>) -> bool {
-        // Check if the next character from the active point is equal to the one we want to add. If
-        // so we don't need to do anything in this extension.
-        if self.get_substring(self.get_active_edge())[self.active_length] == self.text[self.position] {
-            return false;
-        }
-
-        // Insert a new internal node in between the active node and the corresponding child node.
-        // Add a leaf node to the new internal node.
-        let label_start = match self.get_node(self.get_active_edge()) {
-            &Node::Internal(InternalNode { start, .. }) => start,
-            &Node::Leaf(start) => start
-        };
-
-        let internal = self.nodes.len();
-        self.nodes.push(Node::new_internal(label_start, label_start + self.active_length));
-
-        let leaf = self.nodes.len();
-        self.nodes.push(Node::new_leaf(self.position));
-        
-        let existing_edge = self.get_active_edge();
-
-        let length = self.active_length;
-        match self.get_mut_node(existing_edge) {
-            Node::Internal(InternalNode { ref mut start, .. }) => *start += length,
-            Node::Leaf(ref mut start) => *start += length,
-        };
-
-        let active_to_internal = self.active_edge;
-        self.get_mut_active_node().edges.insert(active_to_internal, internal);
-
-        let internal_to_existing = self.text[label_start + self.active_length];
-        let internal_to_leaf = self.text[self.position];
-        self.get_mut_node(internal).mut_internal().edges.insert(internal_to_existing, existing_edge);
-        self.get_mut_node(internal).mut_internal().edges.insert(internal_to_leaf, leaf);
-
-        // if there is a previously created internal node, make suffix link from it to the node
-        // created in this extension.
-        if let &mut Some(node) = previously_created_node {
-            self.get_mut_node(node).mut_internal().suffix_link = Some(internal);
-        }
-        *previously_created_node = Some(internal);
-
-        if self.active_node == 0 {
-            self.active_edge = self.text[self.position - self.remaining + 2];
-            self.active_length -= 1;
-
-            if self.active_length > 0 {
-                self.walk_down(label_start + 1);
-            }
-        } else if self.active_node != 0 {
-            self.active_node = self.get_active_node().suffix_link.unwrap_or(0);
-
-            self.walk_down(label_start);
-        }
-
-        true
+    fn add_node(&mut self, node: Node) -> NodeId {
+        self.nodes.push(node);
+        self.nodes.len() - 1
     }
 
     pub fn step(&mut self) {
-        println!("step {}, inserting '{}', remainder {}", self.position, self.text[self.position] as char, self.remaining);
-
         self.remaining += 1;
+        self.previously_created_node = None;
 
-        let mut previously_created_node = None;
+        let next_char = self.text[self.position];
         for _ in 0..self.remaining {
-            let inserted_node = if self.active_length == 0 {
-                self.insert_leaf_node(&mut previously_created_node)
-            } else {
-                self.insert_internal_node(&mut previously_created_node)
-            };
+            println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
+            if self.active_length == 0 {
+                if !self.get_active_node().edges.contains_key(&next_char) {
+                    self.insert_leaf_node();
 
-            if inserted_node {
-                println!("Inserted a node");
-                self.remaining -= 1;
-            } else {
-                println!("Did not insert a node");
-                if self.active_length != 0 || self.remaining != 1 {
-                    self.active_edge = self.text[self.position - self.remaining + 2];
-                    self.active_length = self.remaining - 2;
-
-                    println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
-
-                    let length = match self.get_node(self.get_active_edge()) {
-                        &Node::Internal(InternalNode { start, end, .. }) => end - start,
-                        &Node::Leaf(start) => self.position - start + 1,
-                    };
-
-                    if self.active_length == length {
-                        self.active_node = self.get_active_edge();
-                        self.active_edge = 0;
-                        self.active_length = 0;
+                    if self.active_node != 0 {
+                        let active_node = self.active_node;
+                        self.set_suffix_link(active_node);
                     }
+
+                    self.update_active_point();
+
+                    self.remaining -= 1;
+                } else {
+                    self.active_edge = next_char;
+                    self.active_length = 1;
+                    self.normalize_active_point();
+                    println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
+                    break;
                 }
+            } else {
+                if self.get_substring(self.get_active_edge())[self.active_length] != next_char {
+                    let new_node = self.insert_internal_node();
 
+                    self.set_suffix_link(new_node);
+                    self.previously_created_node = Some(new_node);
 
+                    self.update_active_point();
 
-                break;
+                    self.remaining -= 1;
+                } else {
+                    self.active_length += 1;
+                    self.normalize_active_point();
+                    println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
+                    break;
+                }
             }
+            println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
         }
 
         self.position += 1;
+    }
+
+    fn insert_leaf_node(&mut self) {
+        let position = self.position;
+        let leaf = self.add_node(Node::new_leaf(position));
+        let next_char = self.text[position];
+        self.get_mut_active_node().edges.insert(next_char, leaf);
+    }
+
+    fn insert_internal_node(&mut self) -> NodeId {
+        let start_of_existing = match self.get_node(self.get_active_edge()) {
+            &Node::Internal(InternalNode { start, .. }) => start,
+            &Node::Leaf(start) => start,
+        };
+        
+        let position = self.position;
+        let active_length = self.active_length;
+
+        let node_a = self.add_node(Node::new_internal(start_of_existing, start_of_existing + active_length));
+        let node_b = self.add_node(Node::new_leaf(position));
+
+        let active_edge_node = self.get_active_edge();
+        match self.get_mut_node(active_edge_node) {
+            Node::Internal(InternalNode { ref mut start, .. }) => *start += active_length,
+            Node::Leaf(ref mut start) => *start += active_length,
+        };
+
+
+        let active_to_a = self.active_edge;
+        self.get_mut_active_node().edges.insert(active_to_a, node_a);
+
+        let a_to_b = self.text[self.position];
+        self.get_mut_node(node_a).mut_internal().edges.insert(a_to_b, node_b);
+
+        let a_to_active_edge = self.text[start_of_existing + self.active_length];
+        self.get_mut_node(node_a).mut_internal().edges.insert(a_to_active_edge, active_edge_node);
+
+        node_a
+    }
+
+    fn update_active_point(&mut self) {
+        if self.active_node == 0 && self.active_length > 0 {
+            self.active_edge = self.text[self.position - self.remaining + 2];
+            self.active_length -= 1;
+        } else if self.active_node != 0 {
+            let suffix_link = self.get_active_node().suffix_link;
+            if let Some(node) = suffix_link {
+                self.active_node = node;
+            } else {
+                self.active_node = 0;
+                self.active_edge = self.text[self.position - self.remaining + 2];
+                self.active_length = self.remaining - 2;
+            }
+        }
+
+        self.normalize_active_point();
+    }
+
+    fn normalize_active_point(&mut self) {
+        loop {
+            println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
+            if self.active_length == 0 {
+                break;
+            } else {
+                let active_edge_length = match self.get_node(self.get_active_edge()) {
+                    &Node::Internal(InternalNode { start, end, .. }) => end - start, 
+                    &Node::Leaf(start) => self.position - start + 1,
+                };
+
+                if self.active_length < active_edge_length {
+                    break;
+                } else if self.active_length == active_edge_length {
+                    self.active_node = self.get_active_edge();
+                    self.active_edge = 0;
+                    self.active_length = 0;
+                    break;
+                } else {
+                    self.active_node = self.get_active_edge();
+                    self.active_edge = self.text[self.position - self.active_length + active_edge_length];
+                    self.active_length -= active_edge_length;
+                }
+            }
+        }
+    }
+
+    fn set_suffix_link(&mut self, link_to: NodeId) {
+        if let Some(node) = self.previously_created_node {
+            self.get_mut_node(node).mut_internal().suffix_link = Some(link_to);
+        }
+
+        self.previously_created_node = None;
     }
 
     fn visualize_node(&self, node: NodeId) -> Vec<String> {
