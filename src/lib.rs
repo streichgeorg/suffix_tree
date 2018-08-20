@@ -110,13 +110,6 @@ impl<'a> SuffixTree<'a> {
             &Node::Leaf(start) => &self.text[start..self.position],
         }
     }
-    
-    fn get_substring_length(&self, node: NodeId) -> usize {
-        match self.get_node(node) {
-            &Node::Internal(InternalNode { start, end, .. }) => (end - start),
-            &Node::Leaf(start) => self.position - start,
-        }
-    }
 
     fn add_node(&mut self, node: Node) -> NodeId {
         self.nodes.push(node);
@@ -129,7 +122,6 @@ impl<'a> SuffixTree<'a> {
 
         let next_char = self.text[self.position];
         for _ in 0..self.remaining {
-            println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
             if self.active_length == 0 {
                 if !self.get_active_node().edges.contains_key(&next_char) {
                     self.insert_leaf_node();
@@ -146,7 +138,6 @@ impl<'a> SuffixTree<'a> {
                     self.active_edge = next_char;
                     self.active_length = 1;
                     self.normalize_active_point();
-                    println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
                     break;
                 }
             } else {
@@ -162,11 +153,9 @@ impl<'a> SuffixTree<'a> {
                 } else {
                     self.active_length += 1;
                     self.normalize_active_point();
-                    println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
                     break;
                 }
             }
-            println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
         }
 
         self.position += 1;
@@ -230,7 +219,6 @@ impl<'a> SuffixTree<'a> {
 
     fn normalize_active_point(&mut self) {
         loop {
-            println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
             if self.active_length == 0 {
                 break;
             } else {
@@ -304,19 +292,8 @@ impl<'a> SuffixTree<'a> {
     }
 
     pub fn visualize(&self) {
-        let text = str::from_utf8(&self.text[..self.position]).unwrap_or("<invalid_string>");
-        println!("'{}'", text); 
-        println!("active point is ({}, '{}', {})", self.active_node, self.active_edge as char, self.active_length);
-        println!("step is {}, remaining is {}", self.position, self.remaining);
         for line in self.visualize_node(0) {
             println!("{}", line);
         }
-
-        for (i, ref node) in self.nodes.iter().enumerate() {
-            if let Node::Internal(InternalNode { suffix_link: Some(link), .. }) = node {
-                println!("Suffix link from {} to {}", i, link);
-            }
-        }
-
     }
 }
