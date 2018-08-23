@@ -157,16 +157,13 @@ impl<'a> SuffixTree<'a> {
         let node_b = self.add_node(Node::new_leaf(position));
 
         let active_edge_node = self.active_edge_node();
+
         self.nodes[active_edge_node].start += active_length;
 
-        let active_to_a = self.active_edge;
-        self.nodes[self.active_node].add_child(active_to_a, node_a);
+        self.nodes[self.active_node].add_child(self.active_edge, node_a);
 
-        let a_to_b = self.bytes[self.position];
-        self.nodes[node_a].add_child(a_to_b, node_b);
-
-        let a_to_active_edge = self.bytes[start_of_existing + self.active_length];
-        self.nodes[node_a].add_child(a_to_active_edge, active_edge_node);
+        self.nodes[node_a].add_child(self.bytes[self.position], node_b);
+        self.nodes[node_a].add_child(self.bytes[start_of_existing + self.active_length], active_edge_node);
 
         node_a
     }
@@ -237,6 +234,7 @@ impl<'a> SuffixTree<'a> {
                 let edge_label = str::from_utf8(&self.bytes[start..end]).unwrap_or("<invalid_string>");
                 let text = format!("({}){}", node, edge_label);
                 let children: Vec<(usize, NodeId)> = children.iter().filter_map(|&e| e).enumerate().collect();
+
                 let mut lines = Vec::new();
                 for &(i, child) in &children {
                     for (j, line) in self._visualize(child).into_iter().enumerate() {
