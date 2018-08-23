@@ -84,19 +84,11 @@ impl<'a> SuffixTree<'a> {
         }
     }
 
-    fn active_node(&self) -> &InternalNode {
-        self.nodes[self.active_node].internal()
-    }
-
-    fn mut_active_node(&mut self) -> &mut InternalNode {
-        self.nodes[self.active_node].mut_internal()
-    }
-
     fn active_edge_node(&self) -> NodeId {
-        *self.active_node().edges.get(&self.active_edge).unwrap()
+        *self.nodes[self.active_node].internal().edges.get(&self.active_edge).unwrap()
     }
 
-    fn get_substring(&self, node: NodeId) -> &[u8] {
+    fn substring(&self, node: NodeId) -> &[u8] {
         match &self.nodes[node] {
             &Node::Internal(InternalNode { start, end, .. }) => &self.text[start..end],
             &Node::Leaf(start) => &self.text[start..self.position],
@@ -115,7 +107,7 @@ impl<'a> SuffixTree<'a> {
         let next_char = self.text[self.position];
         for _ in 0..self.remaining {
             if self.active_length == 0 {
-                if !self.active_node().edges.contains_key(&next_char) {
+                if !self.nodes[self.active_node].internal().edges.contains_key(&next_char) {
                     self.insert_leaf_node();
 
                     if self.active_node != 0 {
@@ -133,7 +125,7 @@ impl<'a> SuffixTree<'a> {
                     break;
                 }
             } else {
-                if self.get_substring(self.active_edge_node())[self.active_length] != next_char {
+                if self.substring(self.active_edge_node())[self.active_length] != next_char {
                     let new_node = self.insert_internal_node();
 
                     self.set_suffix_link(new_node);
@@ -163,7 +155,7 @@ impl<'a> SuffixTree<'a> {
         let position = self.position;
         let leaf = self.add_node(Node::new_leaf(position));
         let next_char = self.text[position];
-        self.mut_active_node().edges.insert(next_char, leaf);
+        self.nodes[self.active_node].mut_internal().edges.insert(next_char, leaf);
     }
 
     fn insert_internal_node(&mut self) -> NodeId {
@@ -186,7 +178,7 @@ impl<'a> SuffixTree<'a> {
 
 
         let active_to_a = self.active_edge;
-        self.mut_active_node().edges.insert(active_to_a, node_a);
+        self.nodes[self.active_node].mut_internal().edges.insert(active_to_a, node_a);
 
         let a_to_b = self.text[self.position];
         &mut self.nodes[node_a].mut_internal().edges.insert(a_to_b, node_b);
@@ -198,8 +190,7 @@ impl<'a> SuffixTree<'a> {
     }
 
     fn update_active_point(&mut self) {
-        let suffix_link = self.active_node().suffix_link;
-        if let Some(node) = suffix_link {
+        if let Some(node) = self.nodes[self.active_node].internal().suffix_link {
             self.active_node = node;
         } else {
             self.active_node = 0;
