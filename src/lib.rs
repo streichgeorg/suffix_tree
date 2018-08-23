@@ -16,7 +16,6 @@ impl Node {
             start,
             end: Some(end),
             children: Some([None; u8::MAX as usize]),
-
             suffix_link: None,
         }
     }
@@ -31,13 +30,12 @@ impl Node {
     }
 
     fn add_child(&mut self, c: u8, child: NodeId) {
-        let children = self.children.as_mut().unwrap();
-        children[c as usize] = Some(child);
+        self.children.as_mut().unwrap()[c as usize] = Some(child);
     }
 }
 
 pub struct SuffixTree<'a> {
-    text: &'a [u8],
+    bytes: &'a [u8],
 
     nodes: Vec<Node>, 
     
@@ -45,15 +43,16 @@ pub struct SuffixTree<'a> {
     active_edge: u8,
     active_length: usize,
 
-    remaining: usize,
     position: usize,
+    remaining: usize,
+
     previously_created_node: Option<NodeId>,
 }
 
 impl<'a> SuffixTree<'a> {
-    pub fn new(text: &'a [u8]) -> SuffixTree<'a> {
+    pub fn init_with_bytes(bytes: &'a [u8]) -> SuffixTree<'a> {
         SuffixTree {
-            text,
+            bytes,
 
             nodes: vec![Node::new_internal(0, 0)],
 
@@ -69,26 +68,32 @@ impl<'a> SuffixTree<'a> {
         }
     }
 
-    fn active_edge_node(&self) -> NodeId {
-        self.nodes[self.active_node].children.unwrap()[self.active_edge as usize].unwrap()
+    pub fn build_from_bytes(bytes: &'a [u8]) -> SuffixTree<'a> {
+        let mut tree = SuffixTree::init_with_bytes(bytes);
+        tree.build();
+        tree
     }
 
-    fn substring(&self, node: NodeId) -> &[u8] {
-        let node = &self.nodes[node];
-        let text = &self.text[node.start..node.end.unwrap_or(self.position)];
-        text
+    pub fn init_with_str(text: &'a str) -> SuffixTree<'a> {
+        SuffixTree::init_with_bytes(text.as_bytes())
     }
 
-    fn add_node(&mut self, node: Node) -> NodeId {
-        self.nodes.push(node);
-        self.nodes.len() - 1
+    pub fn build_from_str(text: &'a str) -> SuffixTree<'a> {
+        SuffixTree::build_from_bytes(text.as_bytes())
+    }
+
+
+    pub fn build(&mut self) {
+        for _ in 0..self.bytes.len() {
+            self.step();
+        }
     }
 
     pub fn step(&mut self) {
         self.remaining += 1;
         self.previously_created_node = None;
 
-        let next_char = self.text[self.position];
+        let next_char = self.bytes[self.position];
         for _ in 0..self.remaining {
             if self.active_length == 0 {
                 if !self.nodes[self.active_node].children.unwrap()[next_char as usize].is_some() {
@@ -116,7 +121,7 @@ impl<'a> SuffixTree<'a> {
                     self.previously_created_node = Some(new_node);
 
                     if self.active_node == 0 {
-                        self.active_edge = self.text[self.position - self.remaining + 2];
+                        self.active_edge = self.bytes[self.position - self.remaining + 2];
                         self.active_length -= 1;
                         self.normalize_active_point();
                     } else {
@@ -138,7 +143,7 @@ impl<'a> SuffixTree<'a> {
     fn insert_leaf_node(&mut self) {
         let position = self.position;
         let leaf = self.add_node(Node::new_leaf(position));
-        let next_char = self.text[position];
+        let next_char = self.bytes[position];
         self.nodes[self.active_node].add_child(next_char, leaf);
     }
 
@@ -157,10 +162,10 @@ impl<'a> SuffixTree<'a> {
         let active_to_a = self.active_edge;
         self.nodes[self.active_node].add_child(active_to_a, node_a);
 
-        let a_to_b = self.text[self.position];
+        let a_to_b = self.bytes[self.position];
         self.nodes[node_a].add_child(a_to_b, node_b);
 
-        let a_to_active_edge = self.text[start_of_existing + self.active_length];
+        let a_to_active_edge = self.bytes[start_of_existing + self.active_length];
         self.nodes[node_a].add_child(a_to_active_edge, active_edge_node);
 
         node_a
@@ -171,7 +176,7 @@ impl<'a> SuffixTree<'a> {
             self.active_node = node;
         } else {
             self.active_node = 0;
-            self.active_edge = self.text[self.position - self.remaining + 2];
+            self.active_edge = self.bytes[self.position - self.remaining + 2];
             self.active_length = self.remaining - 2;
         }
 
@@ -197,7 +202,7 @@ impl<'a> SuffixTree<'a> {
                     break;
                 } else {
                     self.active_node = self.active_edge_node();
-                    self.active_edge = self.text[self.position - self.active_length + active_edge_length];
+                    self.active_edge = self.bytes[self.position - self.active_length + active_edge_length];
                     self.active_length -= active_edge_length;
                 }
             }
@@ -212,10 +217,24 @@ impl<'a> SuffixTree<'a> {
         self.previously_created_node = None;
     }
 
+    fn active_edge_node(&self) -> NodeId {
+        self.nodes[self.active_node].children.unwrap()[self.active_edge as usize].unwrap()
+    }
+
+    fn substring(&self, node: NodeId) -> &[u8] {
+        let node = &self.nodes[node];
+        &self.bytes[node.start..node.end.unwrap_or(self.position)]
+    }
+
+    fn add_node(&mut self, node: Node) -> NodeId {
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
     fn _visualize(&self, node: NodeId) -> Vec<String> {
         match &self.nodes[node] {
             &Node { start, end: Some(end), children: Some(ref children), .. } => {
-                let edge_label = str::from_utf8(&self.text[start..end]).unwrap_or("<invalid_string>");
+                let edge_label = str::from_utf8(&self.bytes[start..end]).unwrap_or("<invalid_string>");
                 let text = format!("({}){}", node, edge_label);
                 let children: Vec<(usize, NodeId)> = children.iter().filter_map(|&e| e).enumerate().collect();
                 let mut lines = Vec::new();
@@ -246,7 +265,7 @@ impl<'a> SuffixTree<'a> {
                 lines
             },
             &Node { start, .. } => {
-                let edge_label = str::from_utf8(&self.text[start..self.position]).unwrap_or("<invalid_string>");
+                let edge_label = str::from_utf8(&self.bytes[start..self.position]).unwrap_or("<invalid_string>");
                 let text = format!("({}){}", node, edge_label);
                 vec![text.to_owned()]
             },

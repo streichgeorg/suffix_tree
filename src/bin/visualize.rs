@@ -17,16 +17,6 @@ fn main() {
     let options = Options::from_args();
 
     let s = format!("{}$", options.input);
-    let mut tree = SuffixTree::new(s.as_bytes());
-
-    for _ in 0..s.len() {
-        tree.step();
-
-        if options.intermediate {
-            tree.visualize();
-            println!("----");
-        }
-    }
-
+    let tree = SuffixTree::build_from_str(&s);
     tree.visualize();
 }
