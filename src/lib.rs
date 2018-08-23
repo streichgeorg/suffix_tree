@@ -1,56 +1,41 @@
-use std::collections::HashMap;
 use std::str;
+use std::u8;
 
 type NodeId = usize;
 
-#[derive(Debug)]
-struct InternalNode {
+struct Node {
     start: usize,
-    end: usize,
-    edges: HashMap<u8, NodeId>,
-
+    end: Option<usize>,
+    children: Option<[Option<NodeId>; u8::MAX as usize]>,
     suffix_link: Option<NodeId>,
-}
-
-#[derive(Debug)]
-enum Node {
-    Internal(InternalNode),
-    Leaf(usize),
 }
 
 impl Node {
     fn new_internal(start: usize, end: usize) -> Node {
-        Node::Internal(InternalNode {
+        Node {
             start,
-            end,
-            edges: HashMap::new(),
+            end: Some(end),
+            children: Some([None; u8::MAX as usize]),
 
             suffix_link: None,
-        })
+        }
     }
 
     fn new_leaf(start: usize) -> Node {
-        Node::Leaf(start)
-    }
-
-    fn internal(&self) -> &InternalNode {
-        if let Node::Internal(ref internal) = self {
-            internal
-        } else {
-            panic!("Expected this node to be an internal node.")
+        Node {
+            start,
+            end: None,
+            children: None,
+            suffix_link: None,
         }
     }
 
-    fn mut_internal(&mut self) -> &mut InternalNode {
-        if let Node::Internal(ref mut internal) = self {
-            internal
-        } else {
-            panic!("Expected this node to be an internal node.")
-        }
+    fn add_child(&mut self, c: u8, child: NodeId) {
+        let children = self.children.as_mut().unwrap();
+        children[c as usize] = Some(child);
     }
 }
 
-#[derive(Debug)]
 pub struct SuffixTree<'a> {
     text: &'a [u8],
 
@@ -85,14 +70,13 @@ impl<'a> SuffixTree<'a> {
     }
 
     fn active_edge_node(&self) -> NodeId {
-        *self.nodes[self.active_node].internal().edges.get(&self.active_edge).unwrap()
+        self.nodes[self.active_node].children.unwrap()[self.active_edge as usize].unwrap()
     }
 
     fn substring(&self, node: NodeId) -> &[u8] {
-        match &self.nodes[node] {
-            &Node::Internal(InternalNode { start, end, .. }) => &self.text[start..end],
-            &Node::Leaf(start) => &self.text[start..self.position],
-        }
+        let node = &self.nodes[node];
+        let text = &self.text[node.start..node.end.unwrap_or(self.position)];
+        text
     }
 
     fn add_node(&mut self, node: Node) -> NodeId {
@@ -107,7 +91,7 @@ impl<'a> SuffixTree<'a> {
         let next_char = self.text[self.position];
         for _ in 0..self.remaining {
             if self.active_length == 0 {
-                if !self.nodes[self.active_node].internal().edges.contains_key(&next_char) {
+                if !self.nodes[self.active_node].children.unwrap()[next_char as usize].is_some() {
                     self.insert_leaf_node();
 
                     if self.active_node != 0 {
@@ -155,14 +139,11 @@ impl<'a> SuffixTree<'a> {
         let position = self.position;
         let leaf = self.add_node(Node::new_leaf(position));
         let next_char = self.text[position];
-        self.nodes[self.active_node].mut_internal().edges.insert(next_char, leaf);
+        self.nodes[self.active_node].add_child(next_char, leaf);
     }
 
     fn insert_internal_node(&mut self) -> NodeId {
-        let start_of_existing = match &self.nodes[self.active_edge_node()]  {
-            &Node::Internal(InternalNode { start, .. }) => start,
-            &Node::Leaf(start) => start,
-        };
+        let start_of_existing = self.nodes[self.active_edge_node()].start;
         
         let position = self.position;
         let active_length = self.active_length;
@@ -171,26 +152,22 @@ impl<'a> SuffixTree<'a> {
         let node_b = self.add_node(Node::new_leaf(position));
 
         let active_edge_node = self.active_edge_node();
-        match &mut self.nodes[active_edge_node] {
-            Node::Internal(InternalNode { ref mut start, .. }) => *start += active_length,
-            Node::Leaf(ref mut start) => *start += active_length,
-        };
-
+        self.nodes[active_edge_node].start += active_length;
 
         let active_to_a = self.active_edge;
-        self.nodes[self.active_node].mut_internal().edges.insert(active_to_a, node_a);
+        self.nodes[self.active_node].add_child(active_to_a, node_a);
 
         let a_to_b = self.text[self.position];
-        &mut self.nodes[node_a].mut_internal().edges.insert(a_to_b, node_b);
+        self.nodes[node_a].add_child(a_to_b, node_b);
 
         let a_to_active_edge = self.text[start_of_existing + self.active_length];
-        &mut self.nodes[node_a].mut_internal().edges.insert(a_to_active_edge, active_edge_node);
+        self.nodes[node_a].add_child(a_to_active_edge, active_edge_node);
 
         node_a
     }
 
     fn update_active_point(&mut self) {
-        if let Some(node) = self.nodes[self.active_node].internal().suffix_link {
+        if let Some(node) = self.nodes[self.active_node].suffix_link {
             self.active_node = node;
         } else {
             self.active_node = 0;
@@ -206,9 +183,9 @@ impl<'a> SuffixTree<'a> {
             if self.active_length == 0 {
                 break;
             } else {
-                let active_edge_length = match &self.nodes[self.active_edge_node()]  {
-                    &Node::Internal(InternalNode { start, end, .. }) => end - start, 
-                    &Node::Leaf(start) => self.position - start + 1,
+                let active_edge_length = {
+                    let node = &self.nodes[self.active_edge_node()];
+                    node.end.unwrap_or(self.position + 1) - node.start
                 };
 
                 if self.active_length < active_edge_length {
@@ -229,7 +206,7 @@ impl<'a> SuffixTree<'a> {
 
     fn set_suffix_link(&mut self, link_to: NodeId) {
         if let Some(node) = self.previously_created_node {
-            self.nodes[node].mut_internal().suffix_link = Some(link_to);
+            self.nodes[node].suffix_link = Some(link_to);
         }
 
         self.previously_created_node = None;
@@ -237,11 +214,12 @@ impl<'a> SuffixTree<'a> {
 
     fn _visualize(&self, node: NodeId) -> Vec<String> {
         match &self.nodes[node] {
-            &Node::Internal(InternalNode { start, end, ref edges, .. }) => {
+            &Node { start, end: Some(end), children: Some(ref children), .. } => {
                 let edge_label = str::from_utf8(&self.text[start..end]).unwrap_or("<invalid_string>");
                 let text = format!("({}){}", node, edge_label);
+                let children: Vec<(usize, NodeId)> = children.iter().filter_map(|&e| e).enumerate().collect();
                 let mut lines = Vec::new();
-                for (i, &child) in edges.values().enumerate() {
+                for &(i, child) in &children {
                     for (j, line) in self._visualize(child).into_iter().enumerate() {
                         let prefix = if i == 0 && j == 0 {
                             text.to_owned()
@@ -251,11 +229,11 @@ impl<'a> SuffixTree<'a> {
 
                         let line = if i == 0 && j == 0 {
                             format!("{}┳{}", prefix, line)
-                        } else if i < edges.len() - 1 && j == 0 {
+                        } else if i < children.len() - 1 && j == 0 {
                             format!("{}┣{}", prefix, line)
                         } else if j == 0 {
                             format!("{}┗{}", prefix, line)
-                        } else if i < edges.len() - 1 {
+                        } else if i < children.len() - 1 {
                             format!("{}┃{}", prefix, line)
                         } else {
                             format!("{} {}", prefix, line)
@@ -267,11 +245,11 @@ impl<'a> SuffixTree<'a> {
 
                 lines
             },
-            &Node::Leaf(start) => {
+            &Node { start, .. } => {
                 let edge_label = str::from_utf8(&self.text[start..self.position]).unwrap_or("<invalid_string>");
                 let text = format!("({}){}", node, edge_label);
                 vec![text.to_owned()]
-            }
+            },
         }
     }
 
