@@ -17,6 +17,9 @@ fn main() {
     let options = Options::from_args();
 
     let s = format!("{}$", options.input);
-    let tree = SuffixTree::build_from_str(&s);
+    let mut tree = SuffixTree::new();
+
+    tree.add_string(&s.as_bytes());
+
     tree.visualize();
 }
