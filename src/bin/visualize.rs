@@ -15,11 +15,10 @@ struct Options {
 
 fn main() {
     let options = Options::from_args();
-    let strings: Vec<String> = options.input.iter().map(|s| { format!("{}$", s) }).collect();
 
     let mut tree = SuffixTree::new();
 
-    for string in &strings {
+    for string in &options.input {
         tree.add_string(string.as_bytes());
     }
 
