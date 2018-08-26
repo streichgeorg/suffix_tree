@@ -174,10 +174,9 @@ impl<'a> SuffixTree<'a> {
                     if self.active_node != 0 {
                         let active_node = self.active_node;
                         self.set_suffix_link(active_node);
-
-                        self.update_active_point();
                     }
 
+                    self.update_active_point();
                     self.remaining -= 1;
                 } else {
                     self.active_edge = next_char;
@@ -188,18 +187,10 @@ impl<'a> SuffixTree<'a> {
             } else {
                 if self.substring(self.active_edge_node())[self.active_length] != next_char {
                     let new_node = self.insert_internal_node();
-
                     self.set_suffix_link(new_node);
                     self.previously_created_node = Some(new_node);
 
-                    if self.active_node == 0 {
-                        self.active_edge = self.current_string()[(self.position + 2) - self.remaining];
-                        self.active_length -= 1;
-                        self.normalize_active_point();
-                    } else {
-                        self.update_active_point();
-                    }
-
+                    self.update_active_point();
                     self.remaining -= 1;
                 } else {
                     self.active_length += 1;
@@ -231,7 +222,6 @@ impl<'a> SuffixTree<'a> {
             &mut Node::Leaf(LeafNode { string_id, ref mut start, .. }) => {
                 let existing_start = *start;
                 *start += active_length;
-
                 (string_id, existing_start)
             },
             &mut Node::Root(_) => unreachable!(),
@@ -263,11 +253,14 @@ impl<'a> SuffixTree<'a> {
             },
             &Node::Internal(_) | &Node::Leaf(_) => {
                 self.active_node = 0;
-                let active_edge = self.current_string()[(self.position + 2) - self.remaining];
-                self.active_edge = active_edge;
+                self.active_edge = self.current_string()[(self.position + 2) - self.remaining];
                 self.active_length = self.remaining - 2;
             }
-            &Node::Root(_) => unreachable!(),
+            &Node::Root(_) if self.active_length > 0 => {
+                self.active_edge = self.current_string()[(self.position + 2) - self.remaining];
+                self.active_length -= 1;
+            },
+            &Node::Root(_) => (),
         }
 
         self.normalize_active_point();
@@ -284,7 +277,6 @@ impl<'a> SuffixTree<'a> {
                     &Node::Leaf(LeafNode { string_id, start, .. }) => {
                         let string_len = self.strings[string_id].len();
                         let offset = if string_id == self.current_string_id() { 1 } else { 0 };
-
                         (string_len + offset) - start
                     },
                 };
@@ -376,9 +368,12 @@ impl<'a> SuffixTree<'a> {
                 } else {
                     self.strings[string_id].len()
                 };
-                let text = str::from_utf8(&self.strings[string_id][start..end])
-                    .unwrap_or("<invalid_string>");
-                vec![format!("({}){}", node, text)]
+
+                vec![
+                    str::from_utf8(&self.strings[string_id][start..end])
+                        .unwrap_or("<invalid_string>")
+                        .to_owned()
+                ]
             },
         }
     }
@@ -387,10 +382,5 @@ impl<'a> SuffixTree<'a> {
         for line in self._visualize(0) {
             println!("{}", line);
         }
-    }
-
-    fn print_info(&self) {
-        println!("active node is {}, active length is {}, active edge is {}", self.active_node, self.active_length, self.active_edge as char);
-        println!("remaining is {}, position is {}", self.remaining, self.position);
     }
 }
