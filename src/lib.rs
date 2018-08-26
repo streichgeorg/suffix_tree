@@ -85,11 +85,6 @@ impl<'a> SuffixTree<'a> {
         tree
     }
 
-    fn print_info(&self) {
-        println!("active node is {}, active length is {}, active edge is {}", self.active_node, self.active_length, self.active_edge as char);
-        println!("remaining is {}, position is {}", self.remaining, self.position);
-    }
-
     fn current_string(&self) -> &[u8]  {
         self.strings[self.current_string_id()]
     }
@@ -199,36 +194,35 @@ impl<'a> SuffixTree<'a> {
     }
 
     fn insert_internal_node(&mut self) -> NodeId {
+        let current_string_id = self.current_string_id();
+        let position = self.position;
+
         let &Node {
             string_id: existing_string_id,
             start: existing_start,
             ..
         } = &self.nodes[self.active_edge_node()];
 
-        let split_position = existing_start + self.active_length;
-        
-        let node_a = Node::new_internal(
-            existing_string_id,
-            existing_start,
-            split_position
-        );
-        let node_a_id = self.add_node(node_a);
-
-        let node_b = Node::new_leaf(self.current_string_id(), self.position);
-        let node_b_id = self.add_node(node_b);
-
         let active_edge_node = self.active_edge_node();
         self.nodes[active_edge_node].start += self.active_length;
 
-        self.nodes[self.active_node].add_child(self.active_edge, node_a_id);
+        let split_position = existing_start + self.active_length;
+        let node_a = self.add_node(Node::new_internal(
+            existing_string_id,
+            existing_start,
+            split_position
+        ));
 
-        let a_to_b = self.current_string()[self.position];
-        self.nodes[node_a_id].add_child(a_to_b, node_b_id);
+        self.nodes[self.active_node].add_child(self.active_edge, node_a);
 
         let a_to_active_edge = self.strings[existing_string_id][split_position];
-        self.nodes[node_a_id].add_child(a_to_active_edge, active_edge_node);
+        self.nodes[node_a].add_child(a_to_active_edge, active_edge_node);
 
-        node_a_id
+        let node_b = self.add_node(Node::new_leaf(current_string_id, position));
+        let a_to_b = self.current_string()[self.position];
+        self.nodes[node_a].add_child(a_to_b, node_b);
+
+        node_a
     }
 
     fn update_active_point(&mut self) {
@@ -306,6 +300,7 @@ impl<'a> SuffixTree<'a> {
             &Node { string_id, start, end: Some(end), children: Some(ref children), .. } => {
                 let edge_label = str::from_utf8(&self.strings[string_id][start..end]).unwrap_or("<invalid_string>");
                 let text = format!("({}){}", node, edge_label);
+
                 let children: Vec<(usize, NodeId)> = children.iter().filter_map(|&e| e).enumerate().collect();
                 let mut lines = Vec::new();
                 for &(i, child) in &children {
@@ -351,5 +346,10 @@ impl<'a> SuffixTree<'a> {
         for line in self._visualize(0) {
             println!("{}", line);
         }
+    }
+
+    fn print_info(&self) {
+        println!("active node is {}, active length is {}, active edge is {}", self.active_node, self.active_length, self.active_edge as char);
+        println!("remaining is {}, position is {}", self.remaining, self.position);
     }
 }

@@ -9,17 +9,19 @@ struct Options {
     #[structopt(short = "i", long = "intermediate")]
     intermediate: bool,
     #[structopt(name = "INPUT")]
-    input: String,
+    input: Vec<String>,
 
 }
 
 fn main() {
     let options = Options::from_args();
+    let strings: Vec<String> = options.input.iter().map(|s| { format!("{}$", s) }).collect();
 
-    let s = format!("{}$", options.input);
     let mut tree = SuffixTree::new();
 
-    tree.add_string(&s.as_bytes());
+    for string in &strings {
+        tree.add_string(string.as_bytes());
+    }
 
     tree.visualize();
 }
