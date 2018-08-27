@@ -315,10 +315,10 @@ impl<'a> SuffixTreeBuilder<'a> {
     fn update_active_point(&mut self) {
         match &self.tree.nodes[self.active_node] {
             &Node::Root(_) => {
-                self.active_edge = self.active_edge.map(|(_, length)| {
-                    let active_symbol_index = self.position + 2 - self.remaining;
-                    (self.tree.current_sequence().at(active_symbol_index), length - 1)
-                });
+                self.active_edge = self.active_edge.map(|(_, length)| ( 
+                    self.tree.current_sequence().at(self.position + 2 - self.remaining),
+                    length - 1
+                ));
             },
             &Node::Internal(InternalNode { suffix_link: Some(node), .. }) => {
                 self.active_node = node;
@@ -327,7 +327,7 @@ impl<'a> SuffixTreeBuilder<'a> {
                 self.active_node = 0;
                 self.active_edge = Some((
                     self.tree.current_sequence().at(self.position + 2 - self.remaining),
-                    self.position + 2 - self.remaining,
+                    self.remaining - 2 
                 ));
             }
         }
@@ -336,8 +336,6 @@ impl<'a> SuffixTreeBuilder<'a> {
     }
 
     fn normalize_active_point(&mut self) {
-        self.print_info();
-        self.tree.pretty_print();
         loop {
             match self.active_edge {
                 Some((_, 0)) => {
