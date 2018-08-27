@@ -158,9 +158,10 @@ impl<'a> SuffixTree<'a> {
                 self.pretty_print_parent(children, "".to_owned())
             },
             &Node::Internal(InternalNode { seq_id, start, end, ref children, .. }) => {
+                let text = self.sequences[seq_id].string_repr_internal(start,end);
                 self.pretty_print_parent(
                     children,
-                    self.sequences[seq_id].string_repr_internal(start,end)
+                    format!("({}){}", node, text) 
                 )
             },
             &Node::Leaf(LeafNode { seq_id, start, .. }) => {
@@ -363,7 +364,7 @@ impl<'a> SuffixTreeBuilder<'a> {
                         let active_symbol_index = self.position - active_length + edge_length;
                         self.active_edge = Some((
                             self.tree.current_sequence().at(active_symbol_index),
-                            active_length - 1
+                            active_length - edge_length
                         ))
                     }
                 },
@@ -384,6 +385,7 @@ impl<'a> SuffixTreeBuilder<'a> {
     }
 
     fn active_edge_node(&self) -> NodeId {
+        self.print_info();
         match self.active_edge {
             Some((symbol, _)) => {
                 self.tree.nodes[self.active_node].get_child(symbol).unwrap()
