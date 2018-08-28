@@ -1,8 +1,11 @@
+extern crate bit_vec;
+
+use bit_vec::BitVec;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str;
 use std::u8;
 
-type NodeId = usize;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 enum Symbol {
@@ -10,14 +13,16 @@ enum Symbol {
     Regular(u8),
 }
 
+type SequenceId = usize;
+
 #[derive(Copy, Clone)]
 struct Sequence<'a> {
-    id: usize,
+    id: SequenceId,
     data: &'a [u8],
 }
 
 impl <'a> Sequence<'a> {
-    fn new(id: usize, data: &'a [u8]) -> Sequence {
+    fn new(id: SequenceId, data: &'a [u8]) -> Sequence {
         Sequence { id, data }
     }
 
@@ -43,20 +48,24 @@ impl <'a> Sequence<'a> {
     }
 }
 
+type NodeId = usize;
+
 struct RootNode {
     children: HashMap<Symbol, NodeId>,
 }
 
 struct InternalNode {
-    seq_id: usize,
+    seq_id: SequenceId,
     start: usize,
     end: usize,
     children: HashMap<Symbol, NodeId>,
     suffix_link: Option<NodeId>,
+
+    sequence_id_set: Option<BitVec>,
 }
 
 struct LeafNode {
-    seq_id: usize,
+    seq_id: SequenceId,
     start: usize,
 }
 
@@ -71,17 +80,19 @@ impl Node {
         Node::Root(RootNode { children: HashMap::new() })
     }
 
-    fn new_internal(seq_id: usize, start: usize, end: usize) -> Node {
+    fn new_internal(seq_id: SequenceId, start: usize, end: usize) -> Node {
         Node::Internal(InternalNode {
             seq_id,
             start,
             end,
             children: HashMap::new(),
             suffix_link: None,
+
+            sequence_id_set: None,
         })
     }
 
-    fn new_leaf(seq_id: usize, start: usize) -> Node {
+    fn new_leaf(seq_id: SequenceId, start: usize) -> Node {
         Node::Leaf(LeafNode { seq_id, start })
     }
 
@@ -105,6 +116,8 @@ impl Node {
 pub struct SuffixTree<'a> {
     sequences: Vec<Sequence<'a>>,
     nodes: Vec<Node>, 
+
+    prepared_lcs: bool,
 }
 
 impl<'a> SuffixTree<'a> {
@@ -112,6 +125,8 @@ impl<'a> SuffixTree<'a> {
         SuffixTree {
             sequences: Vec::new(),
             nodes: vec![Node::new_root()],
+
+            prepared_lcs: false,
         }
     }
 
@@ -127,6 +142,105 @@ impl<'a> SuffixTree<'a> {
     fn add_node(&mut self, node: Node) -> NodeId {
         self.nodes.push(node);
         self.nodes.len() - 1
+    }
+
+    fn prepare_lcs(&mut self) {
+        assert!(!self.prepared_lcs);
+
+        fn _prepare_lcs<'a, 'b>(tree: &'a mut SuffixTree<'b>, node: NodeId) -> Cow<'a, BitVec> {
+            match &tree.nodes[node] {
+                &Node::Internal(InternalNode { ref children, .. }) => {
+                    Some(children.values().cloned().collect())
+                },
+                _ => None,
+            }.map(|children: Vec<usize>| {
+                let mut id_set = BitVec::from_elem(tree.sequences.len(), false);
+                for child in children {
+                    id_set.union(&_prepare_lcs(tree, child));
+                }
+
+                id_set
+            }).into_iter().for_each(|id_set| {
+                match &mut tree.nodes[node] {
+                    &mut Node::Internal(InternalNode { ref mut sequence_id_set, .. }) => {
+                        *sequence_id_set = Some(id_set);
+                    },
+                    _ => unreachable!(),
+                };
+            });
+
+            match &tree.nodes[node] {
+                &Node::Internal(InternalNode{ sequence_id_set: Some(ref id_set), .. }) => {
+                    Cow::Borrowed(id_set)
+                },
+                &Node::Leaf(LeafNode { seq_id, .. }) => {
+                    let mut id_set = BitVec::from_elem(tree.sequences.len(), false);
+                    id_set.set(seq_id, true);
+                    Cow::Owned(id_set)
+                },
+                _ => unreachable!(),
+            }
+        }
+
+        let children: Vec<_> = match &self.nodes[0] {
+            Node::Root(RootNode { ref children }) => children.values().cloned().collect(),
+            _ => unreachable!(),
+        };
+
+        for child in children {
+            _prepare_lcs(self, child);
+        }
+
+        self.prepared_lcs = true;
+    }
+
+    pub fn longest_common_subsequence(&mut self) -> Option<(SequenceId, usize, usize)> {
+        if !self.prepared_lcs {
+            self.prepare_lcs();
+        }
+
+        fn _lcs<'a>(tree: &SuffixTree<'a>, node: NodeId)
+            -> Option<(SequenceId, usize)>
+        {
+            match &tree.nodes[node] {
+                &Node::Internal(InternalNode {
+                    seq_id,
+                    end,
+                    sequence_id_set: Some(ref id_set),
+                    ref children, 
+                    ..
+                }) => {
+                    if id_set.all() {
+                        children.values().filter_map(|&child| {
+                            _lcs(tree, child)
+                        }).max_by_key(|&(_, end)| {
+                            end
+                        }).or_else(|| {
+                            Some((seq_id, end))
+                        })
+                    } else {
+                        None
+                    }
+                },
+                &Node::Leaf(_) => None,
+                _ => unreachable!(),
+            }
+        }
+
+        match self.nodes[0] {
+            Node::Root(RootNode { ref children, .. }) => {
+                children.values().filter_map(|&child| {
+                    let start = match &self.nodes[child] {
+                        &Node::Internal(InternalNode { start, .. })
+                        | &Node::Leaf(LeafNode { start, .. }) => start,
+                        Node::Root(_) => unreachable!(),
+                    };
+
+                    _lcs(self, child).map(|(seq_id, end)| (seq_id, start, end))
+                }).max_by_key(|(_, start, end)| end - start)
+            },
+            _ => unreachable!(),
+        }
     }
 
     fn pretty_print_parent(&self, children: &HashMap<Symbol, NodeId>, text: String) -> Vec<String> {
@@ -178,7 +292,7 @@ impl<'a> SuffixTree<'a> {
 }
 
 pub struct SuffixTreeBuilder<'a> {
-    pub tree: SuffixTree<'a>,
+    tree: SuffixTree<'a>,
 
     active_node: NodeId,
     active_edge: Option<(Symbol, usize)>,
@@ -213,6 +327,10 @@ impl<'a> SuffixTreeBuilder<'a> {
         for _ in 0..self.tree.current_sequence().len() {
             self.insert_next_symbol();
         }
+    }
+
+    pub fn build(self) -> SuffixTree<'a> {
+        self.tree
     }
 
     fn insert_next_symbol(&mut self) {
@@ -385,7 +503,6 @@ impl<'a> SuffixTreeBuilder<'a> {
     }
 
     fn active_edge_node(&self) -> NodeId {
-        self.print_info();
         match self.active_edge {
             Some((symbol, _)) => {
                 self.tree.nodes[self.active_node].get_child(symbol).unwrap()
@@ -395,6 +512,7 @@ impl<'a> SuffixTreeBuilder<'a> {
         
     }
 
+    #[allow(dead_code)]
     fn print_info(&self) {
         println!("active_node is {}, active_edge is {:?}", self.active_node, self.active_edge);
         println!("position is {}, remaining is {}", self.position, self.remaining);

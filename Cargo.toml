@@ -5,4 +5,4 @@ authors = ["Georg Streich <georg.streich@bluewin.ch>"]
 
 [dependencies]
 structopt = "*"
-bit-set = "*"
+bit-vec = "*"
