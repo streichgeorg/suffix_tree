@@ -20,9 +20,5 @@ fn main() {
         tree_builder.add_sequence(string.as_bytes());
     }
 
-    let mut tree = tree_builder.build();
-
-    tree.pretty_print();
-
-    println!("{:?}", tree.longest_common_subsequence());
+    tree_builder.build().pretty_print();
 }

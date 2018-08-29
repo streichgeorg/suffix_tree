@@ -39,12 +39,23 @@ impl <'a> Sequence<'a> {
     }
 
     fn string_repr_internal(&self, start: usize, end: usize) -> String {
-        str::from_utf8(&self.data[start..end]).unwrap_or("<invalid_string>").to_owned()
+        if end - start < 6 {
+            str::from_utf8(&self.data[start..end]).unwrap_or("<invalid_string>").to_owned()
+        } else {
+            let a = str::from_utf8(&self.data[start..(start + 3)]).unwrap_or("<invalid_string>");
+            let b = str::from_utf8(&self.data[(end - 3)..end]).unwrap_or("<invalid_string>");
+            format!("{}..{}", a, b)
+        }
     }
 
     fn string_repr_leaf(&self, start: usize) -> String {
-        let text = str::from_utf8(&self.data[start..]).unwrap_or("<invalid_string>");
-        format!("{}${}", text, self.id)
+        if self.data.len() - start < 2 {
+            let text = str::from_utf8(&self.data[start..]).unwrap_or("<invalid_string>");
+            format!("{}${}", text, self.id)
+        } else {
+            let text = str::from_utf8(&self.data[start..(start + 2)]).unwrap_or("<invalid_string>");
+            format!("{}..${}", text, self.id)
+        }
     }
 }
 
@@ -199,12 +210,13 @@ impl<'a> SuffixTree<'a> {
             self.prepare_lcs();
         }
 
-        fn _lcs<'a>(tree: &SuffixTree<'a>, node: NodeId)
-            -> Option<(SequenceId, usize)>
+        fn _lcs<'a>(tree: &SuffixTree<'a>, node: NodeId, depth: usize)
+            -> Option<(SequenceId, usize, usize)>
         {
             match &tree.nodes[node] {
                 &Node::Internal(InternalNode {
                     seq_id,
+                    start,
                     end,
                     sequence_id_set: Some(ref id_set),
                     ref children, 
@@ -212,11 +224,11 @@ impl<'a> SuffixTree<'a> {
                 }) => {
                     if id_set.all() {
                         children.values().filter_map(|&child| {
-                            _lcs(tree, child)
-                        }).max_by_key(|&(_, end)| {
-                            end
+                            _lcs(tree, child, depth + (end - start))
+                        }).max_by_key(|(_, start, end)| {
+                            end - start
                         }).or_else(|| {
-                            Some((seq_id, end))
+                            Some((seq_id, start - depth, end))
                         })
                     } else {
                         None
@@ -230,17 +242,15 @@ impl<'a> SuffixTree<'a> {
         match self.nodes[0] {
             Node::Root(RootNode { ref children, .. }) => {
                 children.values().filter_map(|&child| {
-                    let start = match &self.nodes[child] {
-                        &Node::Internal(InternalNode { start, .. })
-                        | &Node::Leaf(LeafNode { start, .. }) => start,
-                        Node::Root(_) => unreachable!(),
-                    };
-
-                    _lcs(self, child).map(|(seq_id, end)| (seq_id, start, end))
+                    _lcs(self, child, 0)
                 }).max_by_key(|(_, start, end)| end - start)
             },
             _ => unreachable!(),
         }
+    }
+
+    pub fn sequence_by_id(&self, seq_id: SequenceId) -> &'a [u8] {
+        self.sequences[seq_id].data
     }
 
     fn pretty_print_parent(&self, children: &HashMap<Symbol, NodeId>, text: String) -> Vec<String> {
