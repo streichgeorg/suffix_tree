@@ -6,3 +6,10 @@ authors = ["Georg Streich <georg.streich@bluewin.ch>"]
 [dependencies]
 structopt = "*"
 bit-vec = "*"
+
+[dev-dependencies]
+criterion = "*"
+
+[[bench]]
+name = "lcs_codon_sequences"
+harness = false
