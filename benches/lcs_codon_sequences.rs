@@ -8,24 +8,13 @@ use suffix_tree::SuffixTreeBuilder;
 
 
 fn setup() -> Vec<String> {
-    let mut strings: Vec<String> = Vec::new();
-    let file = File::open("benches/resources/codon_sequences.txt").unwrap();
-    for line in BufReader::new(file).lines() {
-        strings.push(line.unwrap().to_owned());
-    }
-
-    strings
+    let file = File::open("tests/resources/codon_sequences.txt").unwrap();
+    BufReader::new(file).lines().map(|line| line.unwrap().to_owned()).collect();
 }
 
 fn compute_and_check(strings: Vec<String>) {
-    let mut tree_builder = SuffixTreeBuilder::new();
-
-    for string in &strings {
-        tree_builder.add_sequence(string.as_bytes());
-    }
-
-    let mut tree = tree_builder.build();
-    let _ = tree.longest_common_subsequence();
+    let sequences: Vec<&[u8]> = strings.iter().map(|v| v.as_bytes()).collect();
+    let _ = longest_common_subsequence(&sequences).unwrap();
 }
 
 fn benchmark(c: &mut Criterion) {

@@ -325,6 +325,16 @@ impl<'a> SuffixTreeBuilder<'a> {
         }
     }
 
+    pub fn build_from_sequences(sequences: &'a[&'a [u8]]) -> SuffixTree {
+        let mut tree_builder = SuffixTreeBuilder::new();
+
+        for sequence in sequences {
+            tree_builder.add_sequence(sequence);
+        }
+
+        tree_builder.build()
+    }
+
     pub fn add_sequence(&mut self, sequence: &'a [u8]) {
         self.tree.add_sequence(sequence);
 
@@ -504,7 +514,9 @@ impl<'a> SuffixTreeBuilder<'a> {
     fn set_suffix_link(&mut self, link_to: NodeId) {
         if let Some(node) = self.previously_created_node {
             match &mut self.tree.nodes[node] {
-                &mut Node::Internal(InternalNode { ref mut suffix_link, .. }) => *suffix_link = Some(link_to),
+                &mut Node::Internal(InternalNode { ref mut suffix_link, .. }) => {
+                    *suffix_link = Some(link_to)
+                },
                 _ => unreachable!(),
             }
         }
@@ -527,4 +539,11 @@ impl<'a> SuffixTreeBuilder<'a> {
         println!("active_node is {}, active_edge is {:?}", self.active_node, self.active_edge);
         println!("position is {}, remaining is {}", self.position, self.remaining);
     }
+}
+
+pub fn longest_common_subsequence<'a>(sequences: &'a [&'a [u8]]) -> Option<&'a [u8]> {
+    let tree = SuffixTreeBuilder::build_from_sequences(sequences);
+    tree.longest_common_subsequence().map(|(seq_id, start, end)| {
+        &tree.sequence_by_id(seq_id)[start..end]
+    })
 }

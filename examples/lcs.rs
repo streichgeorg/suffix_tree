@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::str;
 use structopt::StructOpt;
-use suffix_tree::SuffixTreeBuilder;
+use suffix_tree::longest_common_subsequence;
 
 #[derive(StructOpt)]
 struct Options {
@@ -20,28 +20,18 @@ struct Options {
 
 fn main() -> io::Result<()> {
     let options = Options::from_args();
-    let mut strings: Vec<String> = Vec::new();
-    let mut tree_builder = SuffixTreeBuilder::new();
 
-    if let Some(file_path) = options.file_path {
+    let strings = if let Some(file_path) = options.file_path {
         let file = File::open(file_path)?;
-        for line in BufReader::new(file).lines() {
-            strings.push(line.unwrap().to_owned());
-        }
+        BufReader::new(file).lines().map(|line| line.unwrap().to_owned()).collect()
     } else {
-        strings = options.input;
-    }
+        options.input
+    };
 
-    for string in &strings {
-        tree_builder.add_sequence(string.as_bytes());
-    }
-
-    let mut tree = tree_builder.build();
-
-    match tree.longest_common_subsequence() {
-        Some((seq_id, start, end)) => {
-            let text = str::from_utf8(&tree.sequence_by_id(seq_id)[start..end])
-                .unwrap_or("<invalid_string>");
+    let sequences: Vec<&[u8]> = strings.iter().map(|v| v.as_bytes()).collect();
+    match longest_common_subsequence(&sequences) {
+        Some(sequence) => {
+            let text = str::from_utf8(sequence).unwrap_or("<invalid_string>");
             println!("{}", text);
         },
         None => println!("No common subsequence."),
