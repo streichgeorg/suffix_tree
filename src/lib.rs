@@ -49,11 +49,11 @@ impl <'a> Sequence<'a> {
     }
 
     fn string_repr_leaf(&self, start: usize) -> String {
-        if self.data.len() - start < 2 {
+        if self.data.len() - start < 3 {
             let text = str::from_utf8(&self.data[start..]).unwrap_or("<invalid_string>");
             format!("{}${}", text, self.id)
         } else {
-            let text = str::from_utf8(&self.data[start..(start + 2)]).unwrap_or("<invalid_string>");
+            let text = str::from_utf8(&self.data[start..(start + 3)]).unwrap_or("<invalid_string>");
             format!("{}..${}", text, self.id)
         }
     }
@@ -132,13 +132,23 @@ pub struct SuffixTree<'a> {
 }
 
 impl<'a> SuffixTree<'a> {
-    pub fn new() -> SuffixTree<'a> {
+    fn new() -> SuffixTree<'a> {
         SuffixTree {
             sequences: Vec::new(),
             nodes: vec![Node::new_root()],
 
             prepared_lcs: false,
         }
+    }
+
+    pub fn from_sequences(sequences: &'a[&'a [u8]]) -> SuffixTree {
+        let mut tree_builder = SuffixTreeBuilder::new();
+
+        for sequence in sequences {
+            tree_builder.add_sequence(sequence);
+        }
+
+        tree_builder.build()
     }
 
     fn add_sequence(&mut self, data: &'a [u8]) {
@@ -210,7 +220,7 @@ impl<'a> SuffixTree<'a> {
             self.prepare_lcs();
         }
 
-        fn _lcs<'a>(tree: &SuffixTree<'a>, node: NodeId, depth: usize)
+        fn lcs<'a>(tree: &SuffixTree<'a>, node: NodeId, depth: usize)
             -> Option<(SequenceId, usize, usize)>
         {
             match &tree.nodes[node] {
@@ -224,7 +234,7 @@ impl<'a> SuffixTree<'a> {
                 }) => {
                     if id_set.all() {
                         children.values().filter_map(|&child| {
-                            _lcs(tree, child, depth + (end - start))
+                            lcs(tree, child, depth + (end - start))
                         }).max_by_key(|(_, start, end)| {
                             end - start
                         }).or_else(|| {
@@ -242,7 +252,7 @@ impl<'a> SuffixTree<'a> {
         match self.nodes[0] {
             Node::Root(RootNode { ref children, .. }) => {
                 children.values().filter_map(|&child| {
-                    _lcs(self, child, 0)
+                    lcs(self, child, 0)
                 }).max_by_key(|(_, start, end)| end - start)
             },
             _ => unreachable!(),
@@ -325,15 +335,6 @@ impl<'a> SuffixTreeBuilder<'a> {
         }
     }
 
-    pub fn build_from_sequences(sequences: &'a[&'a [u8]]) -> SuffixTree {
-        let mut tree_builder = SuffixTreeBuilder::new();
-
-        for sequence in sequences {
-            tree_builder.add_sequence(sequence);
-        }
-
-        tree_builder.build()
-    }
 
     pub fn add_sequence(&mut self, sequence: &'a [u8]) {
         self.tree.add_sequence(sequence);
@@ -542,7 +543,7 @@ impl<'a> SuffixTreeBuilder<'a> {
 }
 
 pub fn longest_common_subsequence<'a>(sequences: &'a [&'a [u8]]) -> Option<&'a [u8]> {
-    let tree = SuffixTreeBuilder::build_from_sequences(sequences);
+    let mut tree = SuffixTree::from_sequences(sequences);
     tree.longest_common_subsequence().map(|(seq_id, start, end)| {
         &tree.sequence_by_id(seq_id)[start..end]
     })

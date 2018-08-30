@@ -4,8 +4,8 @@ version = "0.1.0"
 authors = ["Georg Streich <georg.streich@bluewin.ch>"]
 
 [dependencies]
-structopt = "*"
 bit-vec = "*"
+structopt = "*"
 
 [dev-dependencies]
 criterion = "*"

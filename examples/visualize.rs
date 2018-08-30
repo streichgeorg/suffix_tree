@@ -2,23 +2,16 @@
 extern crate suffix_tree;
 
 use structopt::StructOpt;
-use suffix_tree::SuffixTreeBuilder;
+use suffix_tree::SuffixTree;
 
 #[derive(StructOpt)]
 struct Options {
     #[structopt(name = "INPUT")]
-    input: Vec<String>,
-
+    strings: Vec<String>,
 }
 
 fn main() {
     let options = Options::from_args();
-
-    let mut tree_builder = SuffixTreeBuilder::new();
-
-    for string in &options.input {
-        tree_builder.add_sequence(string.as_bytes());
-    }
-
-    tree_builder.build().pretty_print();
+    let sequences: Vec<&[u8]> = options.strings.iter().map(|s| s.as_bytes()).collect();
+    SuffixTree::from_sequences(&sequences).pretty_print();
 }
