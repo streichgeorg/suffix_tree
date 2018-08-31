@@ -335,6 +335,9 @@ impl<'a> SuffixTreeBuilder<'a> {
         }
     }
 
+    pub fn build(self) -> SuffixTree<'a> {
+        self.tree
+    }
 
     pub fn add_sequence(&mut self, sequence: &'a [u8]) {
         self.tree.add_sequence(sequence);
@@ -348,10 +351,6 @@ impl<'a> SuffixTreeBuilder<'a> {
         for _ in 0..self.tree.current_sequence().len() {
             self.insert_next_symbol();
         }
-    }
-
-    pub fn build(self) -> SuffixTree<'a> {
-        self.tree
     }
 
     fn insert_next_symbol(&mut self) {
@@ -383,7 +382,7 @@ impl<'a> SuffixTreeBuilder<'a> {
         }
     }
 
-    fn insert_leaf_node(&mut self, next_symbol: Symbol) -> bool{
+    fn insert_leaf_node(&mut self, next_symbol: Symbol) -> bool {
         let insert_node = self.tree.nodes[self.active_node].get_child(next_symbol).is_none();
 
         if insert_node {

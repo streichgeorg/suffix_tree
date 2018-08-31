@@ -8,7 +8,7 @@ use suffix_tree::longest_common_subsequence;
 
 
 fn setup() -> Vec<String> {
-    let file = File::open("tests/resources/codon_sequences.txt").unwrap();
+    let file = File::open("benches/resources/codon_sequences.txt").unwrap();
     BufReader::new(file).lines().map(|line| line.unwrap().to_owned()).collect()
 }
 
