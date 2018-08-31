@@ -38,23 +38,14 @@ impl <'a> Sequence<'a> {
         }
     }
 
-    fn string_repr_internal(&self, start: usize, end: usize) -> String {
-        if end - start < 6 {
-            str::from_utf8(&self.data[start..end]).unwrap_or("<invalid_string>").to_owned()
-        } else {
-            let a = str::from_utf8(&self.data[start..(start + 3)]).unwrap_or("<invalid_string>");
-            let b = str::from_utf8(&self.data[(end - 3)..end]).unwrap_or("<invalid_string>");
-            format!("{}..{}", a, b)
-        }
-    }
+    fn substring(&self, start: usize, end: Option<usize>) -> String {
+        let substr = str::from_utf8(&self.data[start..end.unwrap_or(self.data.len())])
+            .unwrap_or("<invalid_string>");
 
-    fn string_repr_leaf(&self, start: usize) -> String {
-        if self.data.len() - start < 3 {
-            let text = str::from_utf8(&self.data[start..]).unwrap_or("<invalid_string>");
-            format!("{}${}", text, self.id)
+        if end.is_none() {
+            format!("{}${}", substr, self.id)
         } else {
-            let text = str::from_utf8(&self.data[start..(start + 3)]).unwrap_or("<invalid_string>");
-            format!("{}..${}", text, self.id)
+            substr.to_owned()
         }
     }
 }
@@ -111,7 +102,7 @@ impl Node {
         match self {
             &mut Node::Internal(InternalNode { ref mut children, .. }) |
             &mut Node::Root(RootNode { ref mut children, .. }) => children.insert(symbol, child),
-            &mut Node::Leaf(_) => unreachable!(),
+            &mut Node::Leaf(_) => panic!(),
         };
     }
 
@@ -119,7 +110,15 @@ impl Node {
         match self {
             &Node::Root(RootNode { ref children, .. }) |
             &Node::Internal(InternalNode { ref children, .. }) => children.get(&symbol).map(|&v| v),
-            &Node::Leaf(_) => unreachable!(),
+            &Node::Leaf(_) => panic!(),
+        }
+    }
+
+    fn children(&self) -> Option<&HashMap<Symbol, NodeId>> {
+        match self {
+            &Node::Root(RootNode { ref children, .. }) |
+            &Node::Internal(InternalNode { ref children, .. }) => Some(children),
+            &Node::Leaf(_) => None,
         }
     }
 }
@@ -151,6 +150,10 @@ impl<'a> SuffixTree<'a> {
         tree_builder.build()
     }
 
+    pub fn sequence_by_id(&self, seq_id: SequenceId) -> &'a [u8] {
+        self.sequences[seq_id].data
+    }
+
     fn add_sequence(&mut self, data: &'a [u8]) {
         let seq_id = self.sequences.len();
         self.sequences.push(Sequence::new(seq_id, data));
@@ -165,29 +168,45 @@ impl<'a> SuffixTree<'a> {
         self.nodes.len() - 1
     }
 
+    fn root_node(&self) -> &RootNode {
+        if let &Node::Root(ref node) = &self.nodes[0] {
+            node
+        } else {
+            panic!();
+        }
+    }
+
+    fn internal_node(&self, node_id: NodeId) -> Option<&InternalNode> {
+        if let &Node::Internal(ref node) = &self.nodes[node_id] {
+            Some(node)
+        } else {
+            None
+        }
+    }
+
+    fn mut_internal_node(&mut self, node_id: NodeId) -> Option<&mut InternalNode> {
+        if let &mut Node::Internal(ref mut node) = &mut self.nodes[node_id] {
+            Some(node)
+        } else {
+            None
+        }
+    }
+
     fn prepare_lcs(&mut self) {
         assert!(!self.prepared_lcs);
 
         fn _prepare_lcs<'a, 'b>(tree: &'a mut SuffixTree<'b>, node: NodeId) -> Cow<'a, BitVec> {
-            match &tree.nodes[node] {
-                &Node::Internal(InternalNode { ref children, .. }) => {
-                    Some(children.values().cloned().collect())
-                },
-                _ => None,
-            }.map(|children: Vec<usize>| {
+            tree.internal_node(node).map(|internal| {
+                internal.children.values().cloned().collect()
+            }).map(|children: Vec<usize>| {
                 let mut id_set = BitVec::from_elem(tree.sequences.len(), false);
                 for child in children {
                     id_set.union(&_prepare_lcs(tree, child));
                 }
 
                 id_set
-            }).into_iter().for_each(|id_set| {
-                match &mut tree.nodes[node] {
-                    &mut Node::Internal(InternalNode { ref mut sequence_id_set, .. }) => {
-                        *sequence_id_set = Some(id_set);
-                    },
-                    _ => unreachable!(),
-                };
+            }).map(|id_set| {
+                tree.mut_internal_node(node).unwrap().sequence_id_set = Some(id_set);
             });
 
             match &tree.nodes[node] {
@@ -199,15 +218,11 @@ impl<'a> SuffixTree<'a> {
                     id_set.set(seq_id, true);
                     Cow::Owned(id_set)
                 },
-                _ => unreachable!(),
+                _ => panic!(),
             }
         }
 
-        let children: Vec<_> = match &self.nodes[0] {
-            Node::Root(RootNode { ref children }) => children.values().cloned().collect(),
-            _ => unreachable!(),
-        };
-
+        let children: Vec<_> = self.root_node().children.values().cloned().collect();
         for child in children {
             _prepare_lcs(self, child);
         }
@@ -220,7 +235,7 @@ impl<'a> SuffixTree<'a> {
             self.prepare_lcs();
         }
 
-        fn lcs<'a>(tree: &SuffixTree<'a>, node: NodeId, depth: usize)
+        fn _longest_common_subsequence<'a>(tree: &SuffixTree<'a>, node: NodeId, depth: usize)
             -> Option<(SequenceId, usize, usize)>
         {
             match &tree.nodes[node] {
@@ -234,7 +249,7 @@ impl<'a> SuffixTree<'a> {
                 }) => {
                     if id_set.all() {
                         children.values().filter_map(|&child| {
-                            lcs(tree, child, depth + (end - start))
+                            _longest_common_subsequence(tree, child, depth + (end - start))
                         }).max_by_key(|(_, start, end)| {
                             end - start
                         }).or_else(|| {
@@ -245,67 +260,59 @@ impl<'a> SuffixTree<'a> {
                     }
                 },
                 &Node::Leaf(_) => None,
-                _ => unreachable!(),
+                _ => panic!(),
             }
         }
 
-        match self.nodes[0] {
-            Node::Root(RootNode { ref children, .. }) => {
-                children.values().filter_map(|&child| {
-                    lcs(self, child, 0)
-                }).max_by_key(|(_, start, end)| end - start)
-            },
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn sequence_by_id(&self, seq_id: SequenceId) -> &'a [u8] {
-        self.sequences[seq_id].data
-    }
-
-    fn pretty_print_parent(&self, children: &HashMap<Symbol, NodeId>, text: String) -> Vec<String> {
-        let mut lines = Vec::new();
-        for (i, &child) in children.values().enumerate() {
-            for (j, line) in self.pretty_print_node(child).into_iter().enumerate() {
-                lines.push(
-                    if i == 0 && j == 0 {
-                        format!("{}┳{}", text, line)
-                    } else if i < children.len() - 1 && j == 0 {
-                        format!("{}┣{}", " ".repeat(text.len()), line)
-                    } else if j == 0 {
-                        format!("{}┗{}", " ".repeat(text.len()), line)
-                    } else if i < children.len() - 1 {
-                        format!("{}┃{}", " ".repeat(text.len()), line)
-                    } else {
-                        format!("{} {}", " ".repeat(text.len()), line)
-                    }
-                );
-            }
-        }
-
-        lines
-    }
-
-    fn pretty_print_node(&self, node: NodeId) -> Vec<String> {
-        match &self.nodes[node] {
-            &Node::Root(RootNode { ref children }) => {
-                self.pretty_print_parent(children, "".to_owned())
-            },
-            &Node::Internal(InternalNode { seq_id, start, end, ref children, .. }) => {
-                let text = self.sequences[seq_id].string_repr_internal(start,end);
-                self.pretty_print_parent(
-                    children,
-                    format!("({}){}", node, text) 
-                )
-            },
-            &Node::Leaf(LeafNode { seq_id, start, .. }) => {
-                vec![self.sequences[seq_id].string_repr_leaf(start)]
-            },
-        }
+        self.root_node().children.values().filter_map(|&child| {
+            _longest_common_subsequence(self, child, 0)
+        }).max_by_key(|(_, start, end)| end - start)
     }
 
     pub fn pretty_print(&self) {
-        for line in self.pretty_print_node(0) {
+        fn _pretty_print<'a>(tree: &SuffixTree<'a>, node: NodeId) -> Vec<String> {
+            let text = match &tree.nodes[node] {
+                &Node::Root(_) => {
+                    "".to_owned()
+                },
+                &Node::Internal(InternalNode { seq_id, start, end, .. }) => {
+                    tree.sequences[seq_id].substring(start, Some(end))
+                },
+                &Node::Leaf(LeafNode { seq_id, start, .. }) => {
+                    tree.sequences[seq_id].substring(start, None)
+                },
+            };
+
+            if let Some(children) = tree.nodes[node].children() {
+                let mut lines = Vec::new();
+                for (i, &child) in children.values().enumerate() {
+                    let printed_child = _pretty_print(tree, child);
+                    for (j, line) in printed_child.into_iter().enumerate() {
+                        let indentation = " ".repeat(text.len());
+
+                        let line = if i == 0 && j == 0 {
+                            format!("{}┳{}", text, line)
+                        } else if i < children.len() - 1 && j == 0 {
+                            format!("{}┣{}", indentation, line)
+                        } else if j == 0 {
+                            format!("{}┗{}", indentation, line)
+                        } else if i < children.len() - 1 {
+                            format!("{}┃{}", indentation, line)
+                        } else {
+                            format!("{} {}", indentation, line)
+                        };
+
+                        lines.push(line);
+                    }
+                }
+
+                lines
+            } else {
+                vec![text]
+            }
+        }
+
+        for line in _pretty_print(&self, 0) {
             println!("{}", line);
         }
     }
@@ -409,7 +416,7 @@ impl<'a> SuffixTreeBuilder<'a> {
         let (active_seq_id, active_start) = match &self.tree.nodes[active_edge_node] {
             &Node::Internal(InternalNode { seq_id, start, .. })
             | &Node::Leaf(LeafNode { seq_id, start }) => (seq_id, start),
-            &Node::Root(_) => unreachable!(),
+            &Node::Root(_) => panic!(),
         };
         let split_position = active_start + active_length;
 
@@ -421,7 +428,7 @@ impl<'a> SuffixTreeBuilder<'a> {
                 &mut Node::Leaf(LeafNode { ref mut start, .. }) => {
                     *start = split_position;
                 },
-                &mut Node::Root(_) => unreachable!(),
+                &mut Node::Root(_) => panic!(),
             };
 
             let node_a = self.tree.add_node(Node::new_internal(
@@ -483,7 +490,7 @@ impl<'a> SuffixTreeBuilder<'a> {
                 },
                 Some((_, active_length)) => {
                     let edge_length = match &self.tree.nodes[self.active_edge_node()] {
-                        &Node::Root(_) => unreachable!(),
+                        &Node::Root(_) => panic!(),
                         &Node::Internal(InternalNode { start, end, .. }) => end - start,
                         &Node::Leaf(LeafNode { seq_id, start, .. }) => {
                             let offset = (seq_id == self.tree.current_sequence().id) as usize;
@@ -513,25 +520,15 @@ impl<'a> SuffixTreeBuilder<'a> {
 
     fn set_suffix_link(&mut self, link_to: NodeId) {
         if let Some(node) = self.previously_created_node {
-            match &mut self.tree.nodes[node] {
-                &mut Node::Internal(InternalNode { ref mut suffix_link, .. }) => {
-                    *suffix_link = Some(link_to)
-                },
-                _ => unreachable!(),
-            }
+            self.tree.mut_internal_node(node).unwrap().suffix_link = Some(link_to);
         }
 
         self.previously_created_node = None;
     }
 
     fn active_edge_node(&self) -> NodeId {
-        match self.active_edge {
-            Some((symbol, _)) => {
-                self.tree.nodes[self.active_node].get_child(symbol).unwrap()
-            },
-            None => unreachable!(),
-        }
-        
+        let (active_symbol, _) = self.active_edge.unwrap();
+        self.tree.nodes[self.active_node].get_child(active_symbol).unwrap()
     }
 
     #[allow(dead_code)]
