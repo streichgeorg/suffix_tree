@@ -6,6 +6,7 @@ authors = ["Georg Streich <georg.streich@bluewin.ch>"]
 [dependencies]
 bit-vec = "*"
 structopt = "*"
+indoc = "*"
 
 [dev-dependencies]
 criterion = "*"

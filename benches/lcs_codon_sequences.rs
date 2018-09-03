@@ -1,5 +1,5 @@
-extern crate suffix_tree;
 #[macro_use] extern crate criterion;
+extern crate suffix_tree;
 
 use criterion::Criterion;
 use std::fs::File;
@@ -28,4 +28,5 @@ criterion_group!{
     config = Criterion::default().sample_size(10);
     targets = benchmark
 }
+
 criterion_main!(benches);

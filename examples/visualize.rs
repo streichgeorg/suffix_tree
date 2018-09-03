@@ -13,5 +13,7 @@ struct Options {
 fn main() {
     let options = Options::from_args();
     let sequences: Vec<&[u8]> = options.strings.iter().map(|s| s.as_bytes()).collect();
-    SuffixTree::from_sequences(&sequences).pretty_print();
+    let output = SuffixTree::from_sequences(&sequences).pretty_print();
+
+    println!("{}", output);
 }

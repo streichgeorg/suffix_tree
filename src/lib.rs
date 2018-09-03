@@ -98,28 +98,30 @@ impl Node {
         Node::Leaf(LeafNode { seq_id, start })
     }
 
-    fn add_child(&mut self, symbol: Symbol, child: NodeId) {
-        match self {
-            &mut Node::Internal(InternalNode { ref mut children, .. }) |
-            &mut Node::Root(RootNode { ref mut children, .. }) => children.insert(symbol, child),
-            &mut Node::Leaf(_) => panic!(),
-        };
-    }
-
-    fn get_child(&self, symbol: Symbol) -> Option<NodeId> {
-        match self {
-            &Node::Root(RootNode { ref children, .. }) |
-            &Node::Internal(InternalNode { ref children, .. }) => children.get(&symbol).map(|&v| v),
-            &Node::Leaf(_) => panic!(),
-        }
-    }
-
     fn children(&self) -> Option<&HashMap<Symbol, NodeId>> {
         match self {
             &Node::Root(RootNode { ref children, .. }) |
             &Node::Internal(InternalNode { ref children, .. }) => Some(children),
             &Node::Leaf(_) => None,
         }
+    }
+
+    fn mut_children(&mut self) -> Option<&mut HashMap<Symbol, NodeId>> {
+        match self {
+            &mut Node::Root(RootNode { ref mut children, .. }) |
+            &mut Node::Internal(InternalNode { ref mut children, .. }) => Some(children),
+            &mut Node::Leaf(_) => None,
+        }
+    }
+
+    fn add_child(&mut self, symbol: Symbol, child: NodeId) {
+        let children = self.mut_children().unwrap();
+        children.insert(symbol, child);
+    }
+
+    fn get_child(&self, symbol: Symbol) -> Option<NodeId> {
+        let children = self.children().unwrap();
+        children.get(&symbol).map(|&v| v)
     }
 }
 
@@ -269,7 +271,7 @@ impl<'a> SuffixTree<'a> {
         }).max_by_key(|(_, start, end)| end - start)
     }
 
-    pub fn pretty_print(&self) {
+    pub fn pretty_print(&self) -> String {
         fn _pretty_print<'a>(tree: &SuffixTree<'a>, node: NodeId) -> Vec<String> {
             let text = match &tree.nodes[node] {
                 &Node::Root(_) => {
@@ -283,23 +285,21 @@ impl<'a> SuffixTree<'a> {
                 },
             };
 
-            if let Some(children) = tree.nodes[node].children() {
-                let mut lines = Vec::new();
-                for (i, &child) in children.values().enumerate() {
-                    let printed_child = _pretty_print(tree, child);
-                    for (j, line) in printed_child.into_iter().enumerate() {
-                        let indentation = " ".repeat(text.len());
+            let indent = " ".repeat(text.len());
 
-                        let line = if i == 0 && j == 0 {
-                            format!("{}┳{}", text, line)
-                        } else if i < children.len() - 1 && j == 0 {
-                            format!("{}┣{}", indentation, line)
-                        } else if j == 0 {
-                            format!("{}┗{}", indentation, line)
-                        } else if i < children.len() - 1 {
-                            format!("{}┃{}", indentation, line)
-                        } else {
-                            format!("{} {}", indentation, line)
+            if let Some(child_map) = tree.nodes[node].children() {
+                let mut children: Vec<NodeId> = child_map.values().map(|&v| v).collect();
+                children.sort();
+
+                let mut lines = Vec::new();
+                for (i, &child) in children.iter().enumerate() {
+                    for (j, line) in _pretty_print(tree, child).into_iter().enumerate() {
+                        let line = match (i, j) {
+                            (0, 0)                           => format!("{}┳{}", text, line),
+                            (_, 0) if i < children.len() - 1 => format!("{}┣{}", indent, line),
+                            (_, _) if i < children.len() - 1 => format!("{}┃{}", indent, line),
+                            (_, 0)                           => format!("{}┗{}", indent, line),
+                            (_, _)                           => format!("{} {}", indent, line),
                         };
 
                         lines.push(line);
@@ -312,9 +312,7 @@ impl<'a> SuffixTree<'a> {
             }
         }
 
-        for line in _pretty_print(&self, 0) {
-            println!("{}", line);
-        }
+        _pretty_print(&self, 0).join("\n")
     }
 }
 
@@ -426,10 +424,10 @@ impl<'a> SuffixTreeBuilder<'a> {
             match &mut self.tree.nodes[active_edge_node] {
                 &mut Node::Internal(InternalNode { ref mut start, .. }) |
                 &mut Node::Leaf(LeafNode { ref mut start, .. }) => {
-                    *start = split_position;
+                   *start = split_position;
                 },
                 &mut Node::Root(_) => panic!(),
-            };
+           };
 
             let node_a = self.tree.add_node(Node::new_internal(
                 active_seq_id,
