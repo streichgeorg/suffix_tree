@@ -3,9 +3,9 @@ extern crate bit_vec;
 use bit_vec::BitVec;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::iter;
 use std::str;
 use std::u8;
-
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 enum Symbol {
@@ -38,11 +38,11 @@ impl <'a> Sequence<'a> {
         }
     }
 
-    fn substring(&self, start: usize, end: Option<usize>) -> String {
-        let substr = str::from_utf8(&self.data[start..end.unwrap_or(self.data.len())])
-            .unwrap_or("<invalid_string>");
+    fn substring(&self, start: usize, maybe_end: Option<usize>) -> String {
+        let end = maybe_end.unwrap_or(self.data.len());
+        let substr = str::from_utf8(&self.data[start..end]).unwrap_or("<invalid_string>");
 
-        if end.is_none() {
+        if maybe_end.is_none() {
             format!("{}${}", substr, self.id)
         } else {
             substr.to_owned()
@@ -106,7 +106,7 @@ impl Node {
         }
     }
 
-    fn mut_children(&mut self) -> Option<&mut HashMap<Symbol, NodeId>> {
+    fn children_mut(&mut self) -> Option<&mut HashMap<Symbol, NodeId>> {
         match self {
             &mut Node::Root(RootNode { ref mut children, .. }) |
             &mut Node::Internal(InternalNode { ref mut children, .. }) => Some(children),
@@ -115,13 +115,21 @@ impl Node {
     }
 
     fn add_child(&mut self, symbol: Symbol, child: NodeId) {
-        let children = self.mut_children().unwrap();
+        let children = self.children_mut().unwrap();
         children.insert(symbol, child);
     }
 
     fn get_child(&self, symbol: Symbol) -> Option<NodeId> {
         let children = self.children().unwrap();
         children.get(&symbol).map(|&v| v)
+    }
+
+    fn is_leaf(&self) -> bool {
+        if let &Node::Leaf(_) = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -142,14 +150,65 @@ impl<'a> SuffixTree<'a> {
         }
     }
 
+    pub fn from_sequence(sequence: &'a [u8]) -> SuffixTree {
+        let mut tree_builder = SuffixTreeBuilder::new();
+        tree_builder.add_sequence(sequence);
+        tree_builder.build()
+    }
+
     pub fn from_sequences(sequences: &'a[&'a [u8]]) -> SuffixTree {
         let mut tree_builder = SuffixTreeBuilder::new();
-
         for sequence in sequences {
             tree_builder.add_sequence(sequence);
         }
-
         tree_builder.build()
+    }
+
+    pub fn pretty_print(&self) -> String {
+        fn _pretty_print<'a>(tree: &SuffixTree<'a>, node: NodeId) -> Vec<String> {
+            let label = match &tree.nodes[node] {
+                &Node::Root(_) => {
+                    "".to_owned()
+                },
+                &Node::Internal(InternalNode { seq_id, start, end, .. }) => {
+                    tree.sequences[seq_id].substring(start, Some(end))
+                },
+                &Node::Leaf(LeafNode { seq_id, start, .. }) => {
+                    tree.sequences[seq_id].substring(start, None)
+                },
+            };
+
+            let text = format!("({}){}", node, label);
+
+
+            if let Some(child_map) = tree.nodes[node].children() {
+                let indent = " ".repeat(text.len());
+
+                let mut children: Vec<NodeId> = child_map.values().map(|&v| v).collect();
+                children.sort();
+
+                let mut lines = Vec::new();
+                for (i, &child) in children.iter().enumerate() {
+                    for (j, line) in _pretty_print(tree, child).into_iter().enumerate() {
+                        let line = match (i, j) {
+                            (0, 0)                           => format!("{}┳{}", text, line),
+                            (_, 0) if i < children.len() - 1 => format!("{}┣{}", indent, line),
+                            (_, _) if i < children.len() - 1 => format!("{}┃{}", indent, line),
+                            (_, 0)                           => format!("{}┗{}", indent, line),
+                            (_, _)                           => format!("{} {}", indent, line),
+                        };
+
+                        lines.push(line);
+                    }
+                }
+
+                lines
+            } else {
+                vec![text]
+            }
+        }
+
+        _pretty_print(&self, 0).join("\n")
     }
 
     pub fn sequence_by_id(&self, seq_id: SequenceId) -> &'a [u8] {
@@ -186,7 +245,7 @@ impl<'a> SuffixTree<'a> {
         }
     }
 
-    fn mut_internal_node(&mut self, node_id: NodeId) -> Option<&mut InternalNode> {
+    fn internal_node_mut(&mut self, node_id: NodeId) -> Option<&mut InternalNode> {
         if let &mut Node::Internal(ref mut node) = &mut self.nodes[node_id] {
             Some(node)
         } else {
@@ -198,18 +257,21 @@ impl<'a> SuffixTree<'a> {
         assert!(!self.prepared_lcs);
 
         fn _prepare_lcs<'a, 'b>(tree: &'a mut SuffixTree<'b>, node: NodeId) -> Cow<'a, BitVec> {
-            tree.internal_node(node).map(|internal| {
-                internal.children.values().cloned().collect()
-            }).map(|children: Vec<usize>| {
-                let mut id_set = BitVec::from_elem(tree.sequences.len(), false);
-                for child in children {
-                    id_set.union(&_prepare_lcs(tree, child));
-                }
+            if tree.internal_node(node).is_some() {
+                let children: Vec<_> = tree.internal_node(node).unwrap()
+                    .children.values().cloned().collect();
 
-                id_set
-            }).map(|id_set| {
-                tree.mut_internal_node(node).unwrap().sequence_id_set = Some(id_set);
-            });
+                let id_set = {
+                    let mut id_set = BitVec::from_elem(tree.sequences.len(), false);
+                    for child in children {
+                        id_set.union(&_prepare_lcs(tree, child));
+                    }
+
+                    id_set
+                };
+
+                tree.internal_node_mut(node).unwrap().sequence_id_set = Some(id_set);
+            }
 
             match &tree.nodes[node] {
                 &Node::Internal(InternalNode{ sequence_id_set: Some(ref id_set), .. }) => {
@@ -249,17 +311,17 @@ impl<'a> SuffixTree<'a> {
                     ref children, 
                     ..
                 }) => {
-                    if id_set.all() {
-                        children.values().filter_map(|&child| {
-                            _longest_common_subsequence(tree, child, depth + (end - start))
-                        }).max_by_key(|(_, start, end)| {
-                            end - start
-                        }).or_else(|| {
-                            Some((seq_id, start - depth, end))
-                        })
-                    } else {
-                        None
+                    if !id_set.all() {
+                        return None;
                     }
+
+                    children.values().filter_map(|&child| {
+                        _longest_common_subsequence(tree, child, depth + (end - start))
+                    }).max_by_key(|(_, start, end)| {
+                        end - start
+                    }).or_else(|| {
+                        Some((seq_id, start - depth, end))
+                    })
                 },
                 &Node::Leaf(_) => None,
                 _ => panic!(),
@@ -271,48 +333,91 @@ impl<'a> SuffixTree<'a> {
         }).max_by_key(|(_, start, end)| end - start)
     }
 
-    pub fn pretty_print(&self) -> String {
-        fn _pretty_print<'a>(tree: &SuffixTree<'a>, node: NodeId) -> Vec<String> {
-            let text = match &tree.nodes[node] {
-                &Node::Root(_) => {
-                    "".to_owned()
-                },
-                &Node::Internal(InternalNode { seq_id, start, end, .. }) => {
-                    tree.sequences[seq_id].substring(start, Some(end))
-                },
-                &Node::Leaf(LeafNode { seq_id, start, .. }) => {
-                    tree.sequences[seq_id].substring(start, None)
-                },
-            };
 
-            let indent = " ".repeat(text.len());
+    pub fn contains(&self, pattern: &[u8]) -> bool {
+        if let Some(_) = self.find_node(pattern) {
+            true
+        } else {
+            false
+        }
+    }
 
-            if let Some(child_map) = tree.nodes[node].children() {
-                let mut children: Vec<NodeId> = child_map.values().map(|&v| v).collect();
-                children.sort();
+    pub fn find<'s, 'b>(&'s self, pattern: &'b [u8])
+        -> Box<Iterator<Item = (SequenceId, usize, usize)> + 's>
+    {
+        if let Some((node, remaining)) = self.find_node(pattern) {
+            let pattern_len = pattern.len();
 
-                let mut lines = Vec::new();
-                for (i, &child) in children.iter().enumerate() {
-                    for (j, line) in _pretty_print(tree, child).into_iter().enumerate() {
-                        let line = match (i, j) {
-                            (0, 0)                           => format!("{}┳{}", text, line),
-                            (_, 0) if i < children.len() - 1 => format!("{}┣{}", indent, line),
-                            (_, _) if i < children.len() - 1 => format!("{}┃{}", indent, line),
-                            (_, 0)                           => format!("{}┗{}", indent, line),
-                            (_, _)                           => format!("{} {}", indent, line),
-                        };
+            Box::new(self.node_occurences(node, 0).map(move |(seq_id, position)| {
+                let end = position + remaining;
+                let start = end - pattern_len;
+                (seq_id, start, end) 
+            }))
+        } else {
+            Box::new(iter::empty())
+        }
+    }
 
-                        lines.push(line);
-                    }
-                }
+    fn node_occurences<'s>(&'s self, node: NodeId, depth: usize)
+        -> Box<Iterator<Item = (SequenceId, usize)> + 's>
+    {
+        match &self.nodes[node] {
+            &Node::Root(_) => Box::new(iter::empty()),
+            &Node::Internal(InternalNode { start, end, ref children, .. }) => {
+                let edge_length = end - start;
 
-                lines
-            } else {
-                vec![text]
+                Box::new(children.values().flat_map(move |&child| {
+                    self.node_occurences(child, depth + edge_length)
+                }))
+            },
+            &Node::Leaf(LeafNode { seq_id, start, .. }) => {
+                Box::new(iter::once((seq_id, start - depth)))
             }
         }
+    }
 
-        _pretty_print(&self, 0).join("\n")
+    fn find_node(&self, pattern: &[u8]) -> Option<(NodeId, usize)> {
+        let mut current_node = 0;
+        let mut remaining = pattern.len();
+
+        loop {
+            let depth = pattern.len() - remaining;
+            let next_symbol = Symbol::Regular(pattern[depth]);
+
+            if let Some(&child) = self.nodes[current_node].children().unwrap().get(&next_symbol) {
+                let label = match &self.nodes[child] {
+                    &Node::Root(_) => panic!(),
+                    &Node::Internal(InternalNode { seq_id, start, end, .. }) => {
+                        &self.sequences[seq_id].data[start..end]
+                    },
+                    &Node::Leaf(LeafNode { seq_id, start, .. }) => {
+                        &self.sequences[seq_id].data[start..]
+                    }
+                };
+
+                current_node = child;
+
+                if remaining < label.len() {
+                    if pattern[depth..] != label[..remaining] {
+                        return None;
+                    } else {
+                        return Some((current_node, remaining));
+                    }
+                } else if &pattern[depth..(depth + label.len())] != label {
+                    return None;
+                } else {
+                    if remaining == label.len() {
+                        return Some((current_node, remaining));
+                    } else if self.nodes[current_node].is_leaf() {
+                        return None;
+                    }
+
+                    remaining -= label.len();
+                }
+            } else {
+                return None;
+            }
+        }
     }
 }
 
@@ -422,11 +527,11 @@ impl<'a> SuffixTreeBuilder<'a> {
 
         if insert_node {
             match &mut self.tree.nodes[active_edge_node] {
+                &mut Node::Root(_) => panic!(),
                 &mut Node::Internal(InternalNode { ref mut start, .. }) |
                 &mut Node::Leaf(LeafNode { ref mut start, .. }) => {
                    *start = split_position;
-                },
-                &mut Node::Root(_) => panic!(),
+                }
            };
 
             let node_a = self.tree.add_node(Node::new_internal(
@@ -459,10 +564,12 @@ impl<'a> SuffixTreeBuilder<'a> {
     fn update_active_point(&mut self) {
         match &self.tree.nodes[self.active_node] {
             &Node::Root(_) => {
-                self.active_edge = self.active_edge.map(|(_, length)| ( 
-                    self.tree.current_sequence().at(self.position + 2 - self.remaining),
-                    length - 1
-                ));
+                if let Some((_, length)) = self.active_edge {
+                    self.active_edge = Some((
+                        self.tree.current_sequence().at(self.position + 2 - self.remaining),
+                        length - 1
+                    ));
+                };
             },
             &Node::Internal(InternalNode { suffix_link: Some(node), .. }) => {
                 self.active_node = node;
@@ -479,6 +586,17 @@ impl<'a> SuffixTreeBuilder<'a> {
         self.normalize_active_point();
     }
 
+    fn active_edge_lenght(&self) -> usize {
+        match &self.tree.nodes[self.active_edge_node()] {
+            &Node::Root(_) => panic!(),
+            &Node::Internal(InternalNode { start, end, .. }) => end - start,
+            &Node::Leaf(LeafNode { seq_id, start, .. }) => {
+                let offset = (seq_id == self.tree.current_sequence().id) as usize;
+                (self.tree.sequences[seq_id].len() + offset) - start
+            }
+        }
+    }
+
     fn normalize_active_point(&mut self) {
         loop {
             match self.active_edge {
@@ -487,15 +605,7 @@ impl<'a> SuffixTreeBuilder<'a> {
                     break;
                 },
                 Some((_, active_length)) => {
-                    let edge_length = match &self.tree.nodes[self.active_edge_node()] {
-                        &Node::Root(_) => panic!(),
-                        &Node::Internal(InternalNode { start, end, .. }) => end - start,
-                        &Node::Leaf(LeafNode { seq_id, start, .. }) => {
-                            let offset = (seq_id == self.tree.current_sequence().id) as usize;
-                            (self.tree.sequences[seq_id].len() + offset) - start
-                        },
-                    };
-
+                    let edge_length = self.active_edge_lenght();
                     if active_length < edge_length {
                         break;
                     } else if active_length == edge_length {
@@ -518,7 +628,7 @@ impl<'a> SuffixTreeBuilder<'a> {
 
     fn set_suffix_link(&mut self, link_to: NodeId) {
         if let Some(node) = self.previously_created_node {
-            self.tree.mut_internal_node(node).unwrap().suffix_link = Some(link_to);
+            self.tree.internal_node_mut(node).unwrap().suffix_link = Some(link_to);
         }
 
         self.previously_created_node = None;
@@ -530,7 +640,7 @@ impl<'a> SuffixTreeBuilder<'a> {
     }
 
     #[allow(dead_code)]
-    fn print_info(&self) {
+    fn print_ukkonen_state(&self) {
         println!("active_node is {}, active_edge is {:?}", self.active_node, self.active_edge);
         println!("position is {}, remaining is {}", self.position, self.remaining);
     }
