@@ -166,7 +166,7 @@ impl<'a> SuffixTree<'a> {
 
     pub fn pretty_print(&self) -> String {
         fn _pretty_print<'a>(tree: &SuffixTree<'a>, node: NodeId) -> Vec<String> {
-            let label = match &tree.nodes[node] {
+            let text = match &tree.nodes[node] {
                 &Node::Root(_) => {
                     "".to_owned()
                 },
@@ -177,9 +177,6 @@ impl<'a> SuffixTree<'a> {
                     tree.sequences[seq_id].substring(start, None)
                 },
             };
-
-            let text = format!("({}){}", node, label);
-
 
             if let Some(child_map) = tree.nodes[node].children() {
                 let indent = " ".repeat(text.len());
@@ -294,17 +291,30 @@ impl<'a> SuffixTree<'a> {
         self.prepared_lcs = true;
     }
 
-    pub fn longest_common_subsequence(&mut self) -> Option<(SequenceId, usize, usize)> {
-        if !self.prepared_lcs {
-            self.prepare_lcs();
-        }
+    /// Returns all occurences of the longest common subsequence in suffix tree.
+    /// If there are multiple such subsequences it just returns the occurences
+    /// of a random one.
+    ///
+    /// #Examples
+    /// ```
+    /// use suffix_tree::SuffixTree;
+    ///
+    /// let mut tree = SuffixTree::from_sequences(&[b"test", b"rest", b"estland"]);
+    /// let mut occurences = tree.longest_common_subsequence();
+    /// for (seq_id, start, end) in occurences {
+    ///     assert_eq!(&tree.sequence_by_id(seq_id)[start..end], b"est")
+    /// }
+    /// ```
+    pub fn longest_common_subsequence<'s>(&'s self)
+        -> Box<Iterator<Item = (SequenceId, usize, usize)> + 's>
+    {
+        assert!(self.prepared_lcs);
 
         fn _longest_common_subsequence<'a>(tree: &SuffixTree<'a>, node: NodeId, depth: usize)
-            -> Option<(SequenceId, usize, usize)>
+            -> Option<(NodeId, usize)>
         {
             match &tree.nodes[node] {
                 &Node::Internal(InternalNode {
-                    seq_id,
                     start,
                     end,
                     sequence_id_set: Some(ref id_set),
@@ -315,12 +325,13 @@ impl<'a> SuffixTree<'a> {
                         return None;
                     }
 
+                    let edge_length = end - start;
                     children.values().filter_map(|&child| {
-                        _longest_common_subsequence(tree, child, depth + (end - start))
-                    }).max_by_key(|(_, start, end)| {
-                        end - start
+                        _longest_common_subsequence(tree, child, depth + edge_length)
+                    }).max_by_key(|&(_, depth)| {
+                        depth
                     }).or_else(|| {
-                        Some((seq_id, start - depth, end))
+                        Some((node, depth + edge_length))
                     })
                 },
                 &Node::Leaf(_) => None,
@@ -328,12 +339,39 @@ impl<'a> SuffixTree<'a> {
             }
         }
 
-        self.root_node().children.values().filter_map(|&child| {
-            _longest_common_subsequence(self, child, 0)
-        }).max_by_key(|(_, start, end)| end - start)
+        let maybe_node = self.root_node().children.values().filter_map(|&child| {
+            let result = _longest_common_subsequence(self, child, 0);
+            result
+        }).max_by_key(|&(_, depth)| depth);
+
+        if let Some((node, depth)) = maybe_node {
+            let edge_length = {
+                let internal = self.internal_node(node).unwrap();
+                internal.end - internal.start
+            };
+
+            Box::new(self.node_occurences(node, 0).map(move |(seq_id, position)| {
+                let end = position + edge_length;
+                let start = end - depth;
+                (seq_id, start, end) 
+            }))
+        } else {
+            Box::new(iter::empty())
+        }
     }
 
 
+    /// Returns true when the given pattern is contained in the suffix tree. 
+    ///
+    /// #Examples
+    /// ```
+    /// use suffix_tree::SuffixTree;
+    ///
+    /// let tree = SuffixTree::from_sequence(b"test");
+    ///
+    /// assert!(tree.contains(b"es"));
+    /// assert!(!tree.contains(b"asdf"));
+    /// ```
     pub fn contains(&self, pattern: &[u8]) -> bool {
         if let Some(_) = self.find_node(pattern) {
             true
@@ -342,6 +380,17 @@ impl<'a> SuffixTree<'a> {
         }
     }
 
+    /// Returns all the occurences of the given pattern in the suffix tree. 
+    ///
+    /// #Examples
+    /// ```
+    /// use suffix_tree::SuffixTree;
+    ///
+    /// let tree = SuffixTree::from_sequence(b"test");
+    /// let mut occurences = tree.find(b"es");
+    /// assert_eq!(occurences.next(), Some((0, 1, 3)));
+    /// assert_eq!(occurences.next(), None);
+    /// ```
     pub fn find<'s, 'b>(&'s self, pattern: &'b [u8])
         -> Box<Iterator<Item = (SequenceId, usize, usize)> + 's>
     {
@@ -445,7 +494,8 @@ impl<'a> SuffixTreeBuilder<'a> {
         }
     }
 
-    pub fn build(self) -> SuffixTree<'a> {
+    pub fn build(mut self) -> SuffixTree<'a> {
+        self.tree.prepare_lcs();
         self.tree
     }
 
@@ -647,8 +697,11 @@ impl<'a> SuffixTreeBuilder<'a> {
 }
 
 pub fn longest_common_subsequence<'a>(sequences: &'a [&'a [u8]]) -> Option<&'a [u8]> {
-    let mut tree = SuffixTree::from_sequences(sequences);
-    tree.longest_common_subsequence().map(|(seq_id, start, end)| {
+    let tree = SuffixTree::from_sequences(sequences);
+    let result: Option<(SequenceId, usize, usize)> = tree.longest_common_subsequence()
+        .take(1).last().clone();
+
+    result.map(|(seq_id, start, end)| {
         &tree.sequence_by_id(seq_id)[start..end]
     })
 }
