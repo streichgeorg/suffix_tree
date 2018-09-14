@@ -67,10 +67,10 @@ fn lcs_codon_sequences() {
     }
 
     let alphabet = Alphabet::new(b"ATGC");
-
     let sequences: Vec<&[u8]> = owned_sequences.iter().map(|s| {
         let slice = s.as_slice();
         &slice[..slice.len() - 1]
     }).collect();
+
     assert_eq!(longest_common_subsequence(&sequences, Some(alphabet)).unwrap(), expected);
 }

@@ -216,7 +216,25 @@ impl<'a, 'b> SuffixTree<'a, 'b> {
     }
 
     pub fn pretty_print(&self) -> String {
-        fn _pretty_print<'a, 'b>(tree: &SuffixTree<'a, 'b>, node: NodeId) -> Vec<String> {
+        fn format_line(
+            line: &str,
+            text: &str,
+            is_first_line: bool,
+            is_branch: bool,
+            is_last_child: bool
+        ) -> String {
+            let indent = " ".repeat(text.len());
+            match (is_first_line, is_branch, is_last_child) {
+                (true, _, _)          => format!("{}┳{}", text, line),
+                (false, true, false)  => format!("{}┣{}", indent, line),
+                (false, false, false) => format!("{}┃{}", indent, line),
+                (false, true, true)   => format!("{}┗{}", indent, line),
+                (false, false, true)  => format!("{} {}", indent, line),
+            }
+        }
+
+        /// Returns a formatted representation of the suffix tree.
+        fn pretty_print_node<'a, 'b>(tree: &SuffixTree<'a, 'b>, node: NodeId) -> Vec<String> {
             let text = match tree.nodes[node] {
                 Node::Root(_) => {
                     "".to_owned()
@@ -229,34 +247,29 @@ impl<'a, 'b> SuffixTree<'a, 'b> {
                 },
             };
 
-            if let Some(child_map) = tree.nodes[node].children() {
-                let indent = " ".repeat(text.len());
-
-                let mut children: Vec<NodeId> = child_map.iter().collect();
-                children.sort();
-
-                let mut lines = Vec::new();
-                for (i, &child) in children.iter().enumerate() {
-                    for (j, line) in _pretty_print(tree, child).into_iter().enumerate() {
-                        let line = match (i, j) {
-                            (0, 0)                           => format!("{}┳{}", text, line),
-                            (_, 0) if i < children.len() - 1 => format!("{}┣{}", indent, line),
-                            (_, _) if i < children.len() - 1 => format!("{}┃{}", indent, line),
-                            (_, 0)                           => format!("{}┗{}", indent, line),
-                            (_, _)                           => format!("{} {}", indent, line),
-                        };
-
-                        lines.push(line);
-                    }
-                }
-
-                lines
-            } else {
-                vec![text]
+            if tree.nodes[node].is_leaf() {
+                return vec![text];
             }
+
+            let child_map = tree.nodes[node].children().unwrap();
+            let mut children: Vec<NodeId> = child_map.iter().collect();
+            children.sort();
+
+            let mut lines = Vec::new();
+            for (i, &child) in children.iter().enumerate() {
+                for (j, line) in pretty_print_node(tree, child).into_iter().enumerate() {
+                    let is_first_line = i == 0 && j == 0;
+                    let is_branch = j == 0;
+                    let is_last_child = i == children.len() - 1;
+
+                    lines.push(format_line(&line, &text, is_first_line, is_branch, is_last_child));
+                }
+            }
+
+            lines
         }
 
-        _pretty_print(&self, 0).join("\n")
+        pretty_print_node(&self, 0).join("\n")
     }
 
     pub fn sequence_by_id(&self, seq_id: SequenceId) -> &'a [u8] {
