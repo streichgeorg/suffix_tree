@@ -2,12 +2,13 @@
 extern crate suffix_tree;
 
 use suffix_tree::{longest_common_subsequence, SuffixTree};
+use suffix_tree::alphabet::Alphabet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 #[test]
 fn build_suffix_tree() {
-    let _ = SuffixTree::from_sequences(&[b"test", b"builder", b"asdfkljasdlf"]);
+    let _ = SuffixTree::from_sequences(&[b"test", b"builder", b"asdfkljasdlf"], None);
 }
 
 #[test]
@@ -25,7 +26,7 @@ fn pretty_print() {
          ┗$1"
     );
 
-    let tree = SuffixTree::from_sequences(&[b"test", b"rest"]);
+    let tree = SuffixTree::from_sequences(&[b"test", b"rest"], None);
 
     assert_eq!(tree.pretty_print(), expected);
 }
@@ -40,7 +41,7 @@ fn lcs() {
         b"estland"
     ];
 
-    assert_eq!(longest_common_subsequence(sequences).unwrap(), expected);
+    assert_eq!(longest_common_subsequence(sequences, None).unwrap(), expected);
 }
 
 #[test]
@@ -53,10 +54,23 @@ fn lcs_codon_sequences() {
     );
 
     let file = File::open("tests/resources/codon_sequences.txt").unwrap();
-    let strings: Vec<String> = BufReader::new(file).lines()
-        .map(|line| line.unwrap().to_owned()).collect();
-    let sequences: Vec<&[u8]> = strings.iter().map(|v| v.as_bytes()).collect();
+    let mut reader = BufReader::new(file);
 
-    assert_eq!(longest_common_subsequence(&sequences).unwrap(), expected);
+    let mut owned_sequences: Vec<Vec<u8>> = Vec::new();
+    loop {
+        let mut sequence = Vec::new();
+        if reader.read_until('\n' as u8, &mut sequence).unwrap() == 0 {
+            break;
+        }
+
+        owned_sequences.push(sequence);
+    }
+
+    let alphabet = Alphabet::new(b"ATGC");
+
+    let sequences: Vec<&[u8]> = owned_sequences.iter().map(|s| {
+        let slice = s.as_slice();
+        &slice[..slice.len() - 1]
+    }).collect();
+    assert_eq!(longest_common_subsequence(&sequences, Some(alphabet)).unwrap(), expected);
 }
-

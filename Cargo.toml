@@ -7,9 +7,14 @@ authors = ["Georg Streich <georg.streich@bluewin.ch>"]
 bit-vec = "*"
 structopt = "*"
 indoc = "*"
+smallvec = "*"
+lazy_static = "*"
 
 [dev-dependencies]
 criterion = "*"
+
+[profile.release]
+debug = true
 
 [[bench]]
 name = "lcs_codon_sequences"
